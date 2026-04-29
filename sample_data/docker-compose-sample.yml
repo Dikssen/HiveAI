@@ -1,0 +1,48 @@
+version: "3.8"
+
+# Sample docker-compose with intentional issues for DevOpsAgent to analyze
+services:
+  app:
+    image: myapp:latest
+    ports:
+      - "8000:8000"
+    environment:
+      # Hardcoded secrets — should use secrets or .env
+      DATABASE_URL: postgresql://admin:password123@db:5432/myapp
+      SECRET_KEY: hardcoded_secret_key_not_safe
+      DEBUG: "true"  # Should be false in production
+    # No healthcheck defined
+    # No restart policy — service won't recover on crash
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:14
+    environment:
+      POSTGRES_PASSWORD: password123  # Hardcoded
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    # No healthcheck
+    # No resource limits — can consume all memory
+
+  redis:
+    image: redis:latest  # Should pin to specific version
+    # No persistence configured — data lost on restart
+    # No memory limit
+
+  worker:
+    image: myapp:latest
+    command: celery -A app.tasks worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://admin:password123@db:5432/myapp
+    # No concurrency limit
+    # No memory limit — caused OOM kills on 2024-01-15
+    # No restart policy
+    depends_on:
+      - db
+      - redis
+
+volumes:
+  db_data:
+    # No backup strategy defined

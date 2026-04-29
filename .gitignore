@@ -1,0 +1,6 @@
+# Ignore idea project files
+.vscode/
+.idea/
+
+# Ignore environment variable files
+.env

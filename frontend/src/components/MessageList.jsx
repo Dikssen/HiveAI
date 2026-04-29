@@ -1,0 +1,212 @@
+import { useEffect, useRef } from "react";
+import Markdown from "react-markdown";
+
+const mdComponents = {
+  // Keep links safe (open in new tab)
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noreferrer" style={{ color: "#3b82f6" }}>
+      {children}
+    </a>
+  ),
+  // Style code blocks
+  code: ({ inline, children }) =>
+    inline ? (
+      <code
+        style={{
+          background: "rgba(0,0,0,0.08)",
+          padding: "1px 5px",
+          borderRadius: 3,
+          fontFamily: "monospace",
+          fontSize: "0.9em",
+        }}
+      >
+        {children}
+      </code>
+    ) : (
+      <pre
+        style={{
+          background: "rgba(0,0,0,0.06)",
+          padding: "10px 12px",
+          borderRadius: 6,
+          overflowX: "auto",
+          fontFamily: "monospace",
+          fontSize: 12,
+          margin: "6px 0",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+        }}
+      >
+        <code>{children}</code>
+      </pre>
+    ),
+  // Tighten up heading sizes inside a chat bubble
+  h1: ({ children }) => <div style={{ fontWeight: 700, fontSize: 15, margin: "8px 0 4px" }}>{children}</div>,
+  h2: ({ children }) => <div style={{ fontWeight: 700, fontSize: 14, margin: "6px 0 3px" }}>{children}</div>,
+  h3: ({ children }) => <div style={{ fontWeight: 600, fontSize: 13, margin: "5px 0 2px" }}>{children}</div>,
+  p:  ({ children }) => <div style={{ margin: "3px 0" }}>{children}</div>,
+  ul: ({ children }) => <ul style={{ paddingLeft: 18, margin: "4px 0" }}>{children}</ul>,
+  ol: ({ children }) => <ol style={{ paddingLeft: 18, margin: "4px 0" }}>{children}</ol>,
+  li: ({ children }) => <li style={{ margin: "2px 0" }}>{children}</li>,
+  hr: () => <hr style={{ border: "none", borderTop: "1px solid rgba(0,0,0,0.1)", margin: "8px 0" }} />,
+  strong: ({ children }) => <strong style={{ fontWeight: 600 }}>{children}</strong>,
+};
+
+function Message({ msg }) {
+  const isUser = msg.role === "user";
+  const isError = msg.role === "assistant" && msg.content.startsWith("❌");
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: isUser ? "flex-end" : "flex-start",
+        marginBottom: 12,
+        alignItems: "flex-start",
+      }}
+    >
+      {!isUser && (
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: "50%",
+            background: "#3b82f6",
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 14,
+            marginRight: 8,
+            flexShrink: 0,
+            marginTop: 2,
+          }}
+        >
+          🤖
+        </div>
+      )}
+
+      <div
+        style={{
+          maxWidth: "72%",
+          padding: "10px 14px",
+          borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+          background: isUser ? "#3b82f6" : isError ? "#fef2f2" : "#f3f4f6",
+          color: isUser ? "#fff" : isError ? "#dc2626" : "#111827",
+          fontSize: 14,
+          lineHeight: 1.55,
+          wordBreak: "break-word",
+          overflowWrap: "break-word",
+          border: isError ? "1px solid #fca5a5" : "none",
+          minWidth: 0,
+        }}
+      >
+        {isUser ? (
+          // User messages: plain text
+          <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
+        ) : (
+          // Agent/assistant messages: render markdown
+          <Markdown components={mdComponents}>{msg.content}</Markdown>
+        )}
+
+        <div
+          style={{
+            fontSize: 10,
+            opacity: 0.55,
+            marginTop: 5,
+            textAlign: isUser ? "right" : "left",
+          }}
+        >
+          {new Date(msg.created_at).toLocaleTimeString()}
+        </div>
+      </div>
+
+      {isUser && (
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: "50%",
+            background: "#6b7280",
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 14,
+            marginLeft: 8,
+            flexShrink: 0,
+            marginTop: 2,
+          }}
+        >
+          👤
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function MessageList({ messages, isProcessing }) {
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  return (
+    <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
+      {messages.length === 0 && (
+        <div
+          style={{
+            textAlign: "center",
+            color: "#9ca3af",
+            marginTop: 40,
+            fontSize: 14,
+          }}
+        >
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🤖</div>
+          <div>Напишіть завдання для команди агентів</div>
+          <div style={{ fontSize: 12, marginTop: 8, color: "#d1d5db" }}>
+            Наприклад: "Зроби аналітику по техпідтримці"
+          </div>
+        </div>
+      )}
+
+      {messages.map((msg) => (
+        <Message key={msg.id} msg={msg} />
+      ))}
+
+      {isProcessing && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <div
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: "50%",
+              background: "#3b82f6",
+              color: "#fff",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 14,
+              flexShrink: 0,
+            }}
+          >
+            🤖
+          </div>
+          <div
+            style={{
+              padding: "10px 14px",
+              background: "#f3f4f6",
+              borderRadius: "18px 18px 18px 4px",
+              fontSize: 14,
+              color: "#6b7280",
+            }}
+          >
+            Агенти працюють над вашим запитом...
+          </div>
+        </div>
+      )}
+
+      <div ref={bottomRef} />
+    </div>
+  );
+}

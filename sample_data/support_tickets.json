@@ -1,0 +1,169 @@
+{
+  "tickets": [
+    {
+      "id": "T-1001",
+      "subject": "Cannot login to account",
+      "category": "Authentication",
+      "priority": "high",
+      "status": "resolved",
+      "created_at": "2024-01-10T09:15:00Z",
+      "resolved_at": "2024-01-10T10:30:00Z",
+      "user_id": "U-4421",
+      "description": "User receives 'Invalid credentials' even with correct password. Password reset did not help."
+    },
+    {
+      "id": "T-1002",
+      "subject": "Payment failed during checkout",
+      "category": "Payments",
+      "priority": "critical",
+      "status": "resolved",
+      "created_at": "2024-01-10T11:00:00Z",
+      "resolved_at": "2024-01-10T11:45:00Z",
+      "user_id": "U-8812",
+      "description": "Credit card payment times out after 30 seconds. PayPal works fine."
+    },
+    {
+      "id": "T-1003",
+      "subject": "Reports page is very slow",
+      "category": "Performance",
+      "priority": "medium",
+      "status": "open",
+      "created_at": "2024-01-11T14:20:00Z",
+      "resolved_at": null,
+      "user_id": "U-2233",
+      "description": "Daily reports page takes 30+ seconds to load. Was fast before Jan 10."
+    },
+    {
+      "id": "T-1004",
+      "subject": "Cannot export data to CSV",
+      "category": "Export",
+      "priority": "medium",
+      "status": "in_progress",
+      "created_at": "2024-01-11T15:00:00Z",
+      "resolved_at": null,
+      "user_id": "U-5544",
+      "description": "Export button downloads empty CSV file. Bug started on version 2.4.1."
+    },
+    {
+      "id": "T-1005",
+      "subject": "Cannot login to account",
+      "category": "Authentication",
+      "priority": "high",
+      "status": "resolved",
+      "created_at": "2024-01-12T08:30:00Z",
+      "resolved_at": "2024-01-12T09:15:00Z",
+      "user_id": "U-9901",
+      "description": "Same issue as T-1001. Login broken after password expiry."
+    },
+    {
+      "id": "T-1006",
+      "subject": "App crashes on mobile",
+      "category": "Mobile",
+      "priority": "high",
+      "status": "open",
+      "created_at": "2024-01-12T10:00:00Z",
+      "resolved_at": null,
+      "user_id": "U-3312",
+      "description": "iOS app crashes immediately after login. Android works fine. iPhone 14, iOS 17.2."
+    },
+    {
+      "id": "T-1007",
+      "subject": "Payment failed during checkout",
+      "category": "Payments",
+      "priority": "critical",
+      "status": "resolved",
+      "created_at": "2024-01-12T11:30:00Z",
+      "resolved_at": "2024-01-12T12:00:00Z",
+      "user_id": "U-7723",
+      "description": "Payment gateway timeout. Same as T-1002."
+    },
+    {
+      "id": "T-1008",
+      "subject": "Wrong email notifications",
+      "category": "Notifications",
+      "priority": "low",
+      "status": "resolved",
+      "created_at": "2024-01-13T09:00:00Z",
+      "resolved_at": "2024-01-13T16:00:00Z",
+      "user_id": "U-4456",
+      "description": "Receiving order confirmation emails for other users. Privacy concern."
+    },
+    {
+      "id": "T-1009",
+      "subject": "Dashboard data not updated",
+      "category": "Performance",
+      "priority": "medium",
+      "status": "open",
+      "created_at": "2024-01-13T14:00:00Z",
+      "resolved_at": null,
+      "user_id": "U-8841",
+      "description": "Dashboard shows data from yesterday even though today is Jan 13."
+    },
+    {
+      "id": "T-1010",
+      "subject": "Cannot login to account",
+      "category": "Authentication",
+      "priority": "high",
+      "status": "open",
+      "created_at": "2024-01-14T08:00:00Z",
+      "resolved_at": null,
+      "user_id": "U-1122",
+      "description": "Third report of login issues this week. Investigating common root cause."
+    },
+    {
+      "id": "T-1011",
+      "subject": "API rate limit too aggressive",
+      "category": "API",
+      "priority": "low",
+      "status": "resolved",
+      "created_at": "2024-01-14T10:00:00Z",
+      "resolved_at": "2024-01-14T12:00:00Z",
+      "user_id": "U-6634",
+      "description": "Integration partner hitting rate limits at 100 req/min. Need higher limit."
+    },
+    {
+      "id": "T-1012",
+      "subject": "App crashes on mobile",
+      "category": "Mobile",
+      "priority": "high",
+      "status": "in_progress",
+      "created_at": "2024-01-14T11:00:00Z",
+      "resolved_at": null,
+      "user_id": "U-9982",
+      "description": "Second mobile crash report. iOS 17 specific issue."
+    },
+    {
+      "id": "T-1013",
+      "subject": "Reports page is very slow",
+      "category": "Performance",
+      "priority": "medium",
+      "status": "open",
+      "created_at": "2024-01-15T09:00:00Z",
+      "resolved_at": null,
+      "user_id": "U-3341",
+      "description": "Third slow reports complaint. Related to DB pool exhaustion on Jan 15."
+    },
+    {
+      "id": "T-1014",
+      "subject": "Billing invoice incorrect",
+      "category": "Billing",
+      "priority": "high",
+      "status": "open",
+      "created_at": "2024-01-15T10:30:00Z",
+      "resolved_at": null,
+      "user_id": "U-7791",
+      "description": "Invoice shows double charge for January subscription."
+    },
+    {
+      "id": "T-1015",
+      "subject": "Feature request: dark mode",
+      "category": "Feature Request",
+      "priority": "low",
+      "status": "open",
+      "created_at": "2024-01-15T11:00:00Z",
+      "resolved_at": null,
+      "user_id": "U-5521",
+      "description": "Please add dark mode to the web app. Many users have requested it."
+    }
+  ]
+}

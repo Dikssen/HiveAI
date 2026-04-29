@@ -1,0 +1,41 @@
+2024-01-15 08:20:33 ERROR [api] PaymentGatewayError: Connection timeout after 30s
+  File "app/services/payment.py", line 87, in process_payment
+    response = gateway.charge(amount=order.total, card=card_token)
+  File "app/integrations/gateway.py", line 45, in charge
+    return self._post("/charge", payload, timeout=30)
+  File "app/integrations/gateway.py", line 112, in _post
+    raise PaymentGatewayError(f"timeout after {timeout}s")
+PaymentGatewayError: timeout after 30s
+
+2024-01-15 10:00:01 ERROR [db] sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 10 reached, connection timed out, timeout 30
+  File "app/db/session.py", line 23, in get_db
+    db = SessionLocal()
+  File "sqlalchemy/pool/base.py", line 322, in connect
+    return _ConnectionFairy._checkout(self)
+sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 10 reached
+
+2024-01-15 10:00:02 ERROR [api] 503 Service Unavailable — Database pool exhausted
+  Endpoint: POST /api/orders
+  User-Agent: Mozilla/5.0 ...
+  user_id: 2091
+  Duration: 30045ms
+
+2024-01-15 10:00:03 ERROR [api] 503 Service Unavailable — Database pool exhausted
+  Endpoint: GET /api/products
+  Duration: 30012ms
+
+2024-01-15 09:30:11 ERROR [worker] celery.exceptions.WorkerLostError: Worker exited prematurely: signal 9 (SIGKILL)
+  Task: app.workers.tasks.generate_report[8f4a2c1d-...]
+  Queue depth at time of failure: 842
+  Worker memory at failure: 7.8GB / 8GB
+
+2024-01-15 09:15:22 ERROR [oom-killer] Out of memory: Kill process 14322 (python) score 892
+  Killed process 14322 (celery worker), total-vm:8192000kB, anon-rss:7987200kB
+  Memory cgroup out of memory: Killed process 14322
+
+2024-01-15 08:35:19 ERROR [slow-query] Query exceeded 1000ms threshold
+  Query: SELECT o.*, u.email, u.name FROM orders o JOIN users u ON o.user_id = u.id
+         WHERE o.created_at > '2024-01-14' ORDER BY o.created_at DESC
+  Duration: 1180ms
+  Rows examined: 284920
+  Missing index on: orders.created_at

@@ -1,0 +1,29 @@
+2024-01-15 08:00:01 INFO  [api] Service started on port 8000
+2024-01-15 08:00:05 INFO  [db] Database connection pool initialized (size=5)
+2024-01-15 08:01:12 INFO  [api] GET /api/health 200 12ms
+2024-01-15 08:05:33 INFO  [api] POST /api/orders 201 45ms user_id=1042
+2024-01-15 08:07:18 INFO  [api] GET /api/orders?page=1 200 23ms
+2024-01-15 08:12:45 WARNING [cache] Cache miss rate: 78% — consider warming cache on startup
+2024-01-15 08:15:00 INFO  [scheduler] Running daily cleanup job
+2024-01-15 08:15:01 INFO  [scheduler] Cleaned 234 expired sessions
+2024-01-15 08:20:33 ERROR [api] POST /api/payments 500 — PaymentGatewayError: timeout after 30s
+2024-01-15 08:20:34 ERROR [payment] Transaction ID tx_8821 failed: gateway timeout
+2024-01-15 08:20:34 INFO  [payment] Retry attempt 1/3 for tx_8821
+2024-01-15 08:20:64 INFO  [payment] Retry attempt 2/3 for tx_8821
+2024-01-15 08:21:05 INFO  [payment] Transaction tx_8821 succeeded on retry 2
+2024-01-15 08:35:19 INFO  [api] GET /api/reports/daily 200 1240ms — slow query detected
+2024-01-15 08:35:20 WARNING [db] Query took 1180ms: SELECT * FROM orders JOIN users ...
+2024-01-15 09:00:00 INFO  [api] 60-minute stats: 1204 requests, avg_latency=45ms, errors=3
+2024-01-15 09:01:45 INFO  [api] POST /api/support/tickets 201 33ms
+2024-01-15 09:15:22 WARNING [memory] Memory usage: 78% (6.2GB / 8GB)
+2024-01-15 09:30:11 ERROR [worker] Task queue depth: 842 — workers may be overwhelmed
+2024-01-15 09:30:12 INFO  [worker] Scaling workers: 4 → 8
+2024-01-15 09:45:00 INFO  [api] 60-minute stats: 2108 requests, avg_latency=62ms, errors=12
+2024-01-15 10:00:01 ERROR [db] Connection pool exhausted — waiting for available connection
+2024-01-15 10:00:02 ERROR [api] POST /api/orders 503 — DB pool exhausted, user_id=2091
+2024-01-15 10:00:03 ERROR [api] GET /api/products 503 — DB pool exhausted
+2024-01-15 10:00:45 INFO  [db] Connection pool increased to 20
+2024-01-15 10:01:00 INFO  [api] Service recovering — error rate dropping
+2024-01-15 10:15:00 INFO  [api] 60-minute stats: 3012 requests, avg_latency=88ms, errors=47
+2024-01-15 11:00:00 INFO  [api] 60-minute stats: 1876 requests, avg_latency=41ms, errors=2
+2024-01-15 12:00:00 INFO  [api] 60-minute stats: 2234 requests, avg_latency=39ms, errors=1
