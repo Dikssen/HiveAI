@@ -12,7 +12,7 @@ from atlassian import Confluence
 from bs4 import BeautifulSoup, Tag
 from pydantic import BaseModel, Field
 
-from app.config import settings
+from app.db.integration_config_helper import get_integration_value
 from app.tools.base import LoggedTool
 
 _PLACEHOLDER_PATTERNS = ("your-company", "example.atlassian", "placeholder", "acme.atlassian")
@@ -26,9 +26,9 @@ _NOT_CONFIGURED_MSG = (
 
 
 def _get_client() -> Confluence:
-    url = settings.CONFLUENCE_URL or ""
-    user = settings.CONFLUENCE_USER or ""
-    token = settings.CONFLUENCE_API_TOKEN or ""
+    url = get_integration_value("CONFLUENCE_URL") or ""
+    user = get_integration_value("CONFLUENCE_USER") or ""
+    token = get_integration_value("CONFLUENCE_API_TOKEN") or ""
 
     if not url or not user or not token:
         raise RuntimeError(_NOT_CONFIGURED_MSG)
@@ -154,7 +154,7 @@ class ConfluenceSearchTool(LoggedTool):
     def _run(self, query: str, limit: int = 10) -> str:
         with _confluence_errors():
             client = _get_client()
-            space = settings.CONFLUENCE_SPACE_KEY or ""
+            space = get_integration_value("CONFLUENCE_SPACE_KEY") or ""
             cql = f'text ~ "{query}" AND type = page'
             if space:
                 cql += f' AND space.key = "{space}"'
@@ -188,7 +188,7 @@ class ConfluenceGetPageTool(LoggedTool):
             if page_id:
                 page = client.get_page_by_id(page_id, expand="body.storage")
             elif title:
-                space = settings.CONFLUENCE_SPACE_KEY or ""
+                space = get_integration_value("CONFLUENCE_SPACE_KEY") or ""
                 if not space:
                     return "Error: provide page_id, or set CONFLUENCE_SPACE_KEY to search by title."
                 page = client.get_page_by_title(space, title, expand="body.storage")
@@ -217,7 +217,7 @@ class ConfluenceGetSpaceRootTool(LoggedTool):
     def _run(self, limit: int = 50) -> str:
         with _confluence_errors():
             client = _get_client()
-            space = settings.CONFLUENCE_SPACE_KEY or ""
+            space = get_integration_value("CONFLUENCE_SPACE_KEY") or ""
             if not space:
                 return "Error: CONFLUENCE_SPACE_KEY is not set in config."
             space_info = client.get_space(space, expand="homepage")
@@ -317,7 +317,7 @@ class ConfluenceCreatePageTool(LoggedTool):
     def _run(self, title: str, content_markdown: str, parent_id: str = "") -> str:
         with _confluence_errors():
             client = _get_client()
-            effective_space = settings.CONFLUENCE_SPACE_KEY
+            effective_space = get_integration_value("CONFLUENCE_SPACE_KEY")
             # if not effective_space:
             #     return "Error: space_key is required. Set CONFLUENCE_SPACE_KEY in config or pass space_key explicitly."
             body_html = _markdown_to_storage(content_markdown)
@@ -327,7 +327,8 @@ class ConfluenceCreatePageTool(LoggedTool):
             result = client.create_page(**kwargs)
             page_id = result.get("id", "unknown")
             page_url = result.get("_links", {}).get("webui", "")
-            return f"Page created. ID: {page_id}. URL: {settings.CONFLUENCE_URL}{page_url}"
+            base_url = get_integration_value("CONFLUENCE_URL") or ""
+            return f"Page created. ID: {page_id}. URL: {base_url}{page_url}"
 
 
 class ConfluenceUpdateSectionInput(BaseModel):
@@ -436,7 +437,9 @@ def get_confluence_tools() -> list:
         ConfluenceGetPageTool(),
         ConfluenceGetSectionTool(),
     ]
-    if settings.CONFLUENCE_WRITE_ENABLED:
+    write_enabled_raw = get_integration_value("CONFLUENCE_WRITE_ENABLED", fallback="false")
+    write_enabled = str(write_enabled_raw).lower() in ("true", "1", "yes")
+    if write_enabled:
         tools += [
             ConfluenceCreatePageTool(),
             ConfluenceUpdateSectionTool(),

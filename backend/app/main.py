@@ -8,6 +8,7 @@ from app.api.tasks import router as tasks_router
 from app.api.agent_runs import router as agent_runs_router
 from app.api.health import router as health_router
 from app.api.agent_config import router as agent_config_router
+from app.api.integrations import router as integrations_router
 
 
 @asynccontextmanager
@@ -42,6 +43,7 @@ app.include_router(tasks_router, prefix="/api")
 app.include_router(agent_runs_router, prefix="/api")
 app.include_router(health_router, prefix="/api")
 app.include_router(agent_config_router, prefix="/api")
+app.include_router(integrations_router, prefix="/api")
 
 
 @app.get("/")

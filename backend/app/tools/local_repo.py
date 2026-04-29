@@ -3,13 +3,13 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from git import Repo, InvalidGitRepositoryError, GitCommandError
 from app.tools.base import LoggedTool
-from app.config import settings
+from app.db.integration_config_helper import get_integration_value
 
 REPOS_ROOT = Path("/app/repos")
 
 
 def _get_clone_url(repo_name: str) -> str:
-    token = settings.GITHUB_TOKEN
+    token = get_integration_value("GITHUB_TOKEN")
     username = _get_github_username()
     if token:
         return f"https://{token}@github.com/{username}/{repo_name}.git"
@@ -18,7 +18,8 @@ def _get_clone_url(repo_name: str) -> str:
 
 def _get_github_username() -> str:
     from github import Github, Auth
-    git = Github(auth=Auth.Token(settings.GITHUB_TOKEN))
+    token = get_integration_value("GITHUB_TOKEN")
+    git = Github(auth=Auth.Token(token))
     return git.get_user().login
 
 

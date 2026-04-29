@@ -6,5 +6,6 @@ from app.models.task import Task
 from app.models.worker_log import WorkerLog
 from app.models.agent import Agent
 from app.models.agent_tool_config import AgentToolConfig
+from app.models.integration_config import IntegrationConfig
 
-__all__ = ["Chat", "Message", "AgentRun", "Task", "WorkerLog", "Agent", "AgentToolConfig"]
+__all__ = ["Chat", "Message", "AgentRun", "Task", "WorkerLog", "Agent", "AgentToolConfig", "IntegrationConfig"]
