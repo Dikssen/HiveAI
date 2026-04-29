@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = "http://localhost:11434"
     LLM_API_KEY: Optional[str] = None
     LLM_SUPPORTS_TOOLS: bool = True
+    LLM_ENABLE_THINKING: bool = True
 
     LOG_LEVEL: str = "INFO"
     SAMPLE_DATA_PATH: str = "./sample_data"
@@ -20,6 +21,7 @@ class Settings(BaseSettings):
     CONFLUENCE_URL: Optional[str] = None
     CONFLUENCE_USER: Optional[str] = None
     CONFLUENCE_API_TOKEN: Optional[str] = None
+    CONFLUENCE_SPACE_KEY: Optional[str] = None
     CONFLUENCE_WRITE_ENABLED: bool = False
 
     MAX_ORCHESTRATOR_ITERATIONS: int = 10

@@ -16,7 +16,18 @@ def _wrap_crewai_tool(ct: Any) -> StructuredTool:
     schema = getattr(ct, "args_schema", None)
 
     def call(**kwargs: Any) -> str:
-        return ct._run(**kwargs)
+        try:
+            return ct._run(**kwargs)
+        except Exception as e:
+            logger.exception(
+                "tool_failed",
+                tool=getattr(ct, "name", type(ct).__name__),
+                error=str(e),
+            )
+            return (
+                f"[TOOL_FAILED: {getattr(ct, 'name', type(ct).__name__)}]\n"
+                f"{str(e)}"
+            )
 
     return StructuredTool.from_function(
         func=call,
@@ -26,39 +37,33 @@ def _wrap_crewai_tool(ct: Any) -> StructuredTool:
     )
 
 
-def _strip_reasoning_hook(state: dict) -> dict:
-    """
-    DeepSeek thinking mode returns `reasoning_content` in AIMessages.
-    When LangGraph passes history back to the API, it strips that field —
-    causing a 400 error. We preemptively remove it before each LLM call.
-    """
-    cleaned = []
-    for msg in state.get("messages", []):
-        if isinstance(msg, AIMessage) and "reasoning_content" in msg.additional_kwargs:
-            kwargs = {k: v for k, v in msg.additional_kwargs.items() if k != "reasoning_content"}
-            msg = AIMessage(
-                content=msg.content,
-                additional_kwargs=kwargs,
-                tool_calls=getattr(msg, "tool_calls", []),
-                id=msg.id,
-            )
-        cleaned.append(msg)
-    return {"messages": cleaned}
-
 
 class LangGraphRunner(AgentRunner):
     def __init__(self):
-        self._llm: Any = None
+        self._tool_llm = get_langchain_llm(
+            json_mode=False,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+        self._tool_llm: Any = None
 
-    def _get_llm(self) -> Any:
+    def _get_llm(self, *, supports_tools: bool = False) -> Any:
+        if supports_tools:
+            if not self._tool_llm:
+                self._tool_llm = get_langchain_llm(
+                    json_mode=False,
+                    extra_body={"thinking": {"type": "disabled"}},
+                )
+            return self._tool_llm
+
         if not self._llm:
             self._llm = get_langchain_llm(json_mode=False)
+
         return self._llm
 
     def run(self, agent_name: str, task_description: str, expected_output: str, supports_tools: bool) -> str:
         from langgraph.prebuilt import create_react_agent
 
-        llm = self._get_llm()
+        llm = self._get_llm(supports_tools=supports_tools)
         agent_impl = AGENT_REGISTRY[agent_name]
 
         system_prompt = (
@@ -87,7 +92,6 @@ class LangGraphRunner(AgentRunner):
         graph = create_react_agent(
             llm, tools,
             prompt=system_prompt,
-            pre_model_hook=_strip_reasoning_hook,
         )
 
         result = graph.invoke({"messages": [HumanMessage(content=task_description)]})

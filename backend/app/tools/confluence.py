@@ -3,9 +3,11 @@ Confluence tools — read and write Confluence pages.
 Write tools (Create, UpdateSection, AppendSection) are only registered
 when CONFLUENCE_WRITE_ENABLED=true in config.
 """
+from contextlib import contextmanager
 from typing import Optional
 
 import markdown2
+import requests
 from atlassian import Confluence
 from bs4 import BeautifulSoup, Tag
 from pydantic import BaseModel, Field
@@ -13,18 +15,73 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.tools.base import LoggedTool
 
+_PLACEHOLDER_PATTERNS = ("your-company", "example.atlassian", "placeholder", "acme.atlassian")
+
+_NOT_CONFIGURED_MSG = (
+    "CONFLUENCE_NOT_CONFIGURED: Confluence integration is not available. "
+    "The environment variables CONFLUENCE_URL, CONFLUENCE_USER, and CONFLUENCE_API_TOKEN "
+    "must be set to real Confluence credentials. "
+    "Do not retry this task — inform the user that Confluence must be configured first."
+)
+
 
 def _get_client() -> Confluence:
-    if not settings.CONFLUENCE_URL or not settings.CONFLUENCE_USER or not settings.CONFLUENCE_API_TOKEN:
+    url = settings.CONFLUENCE_URL or ""
+    user = settings.CONFLUENCE_USER or ""
+    token = settings.CONFLUENCE_API_TOKEN or ""
+
+    if not url or not user or not token:
+        raise RuntimeError(_NOT_CONFIGURED_MSG)
+
+    if any(p in url for p in _PLACEHOLDER_PATTERNS):
         raise RuntimeError(
-            "Confluence is not configured. Set CONFLUENCE_URL, CONFLUENCE_USER, CONFLUENCE_API_TOKEN."
+            f"CONFLUENCE_NOT_CONFIGURED: CONFLUENCE_URL '{url}' is a placeholder, not a real URL. "
+            "Update it with your actual Confluence URL. "
+            "Do not retry this task — inform the user that Confluence must be configured first."
         )
-    return Confluence(
-        url=settings.CONFLUENCE_URL,
-        username=settings.CONFLUENCE_USER,
-        password=settings.CONFLUENCE_API_TOKEN,
-        cloud=True,
-    )
+
+    return Confluence(url=url, username=user, password=token, cloud=True)
+
+
+@contextmanager
+def _confluence_errors():
+    """Catch all Confluence/HTTP/connection errors and return a clear message instead of raising."""
+    try:
+        yield
+    except RuntimeError:
+        raise  # already formatted — let LoggedTool handle it
+    except requests.exceptions.ConnectionError as e:
+        raise RuntimeError(
+            f"CONFLUENCE_UNREACHABLE: Cannot connect to Confluence ({e}). "
+            "Check CONFLUENCE_URL and network access. Do not retry."
+        ) from e
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "unknown"
+        if status == 401:
+            msg = "Invalid credentials — check CONFLUENCE_USER and CONFLUENCE_API_TOKEN."
+        elif status == 403:
+            msg = "Access denied — the API token may lack required permissions."
+        elif status == 404:
+            msg = "Resource not found — check CONFLUENCE_URL and space/page identifiers."
+        else:
+            msg = str(e)
+        raise RuntimeError(
+            f"CONFLUENCE_HTTP_ERROR ({status}): {msg} Do not retry."
+        ) from e
+    except Exception as e:
+        # Catches atlassian-python-api specific errors (ApiPermissionError, ApiError, etc.)
+        msg = str(e)
+        if "permission" in msg.lower() or "forbidden" in msg.lower():
+            hint = "The API token lacks required Confluence permissions."
+        elif "not found" in msg.lower():
+            hint = "Resource not found — check space/page identifiers."
+        elif "unauthorized" in msg.lower():
+            hint = "Invalid credentials — check CONFLUENCE_USER and CONFLUENCE_API_TOKEN."
+        else:
+            hint = msg
+        raise RuntimeError(
+            f"CONFLUENCE_ERROR: {hint} Do not retry — inform the user."
+        ) from e
 
 
 def _markdown_to_storage(md: str) -> str:
@@ -92,20 +149,22 @@ class ConfluenceSearchTool(LoggedTool):
     args_schema: type[BaseModel] = ConfluenceSearchInput
 
     def _run(self, query: str, space_key: str = "", limit: int = 10) -> str:
-        client = _get_client()
-        cql = f'text ~ "{query}" AND type = page'
-        if space_key:
-            cql += f' AND space.key = "{space_key}"'
-        results = client.cql(cql, limit=limit).get("results", [])
-        if not results:
-            return "No pages found."
-        lines = []
-        for r in results:
-            content = r.get("content", {})
-            lines.append(
-                f"- ID: {content.get('id')} | Space: {content.get('space', {}).get('key')} | Title: {content.get('title')}"
-            )
-        return "\n".join(lines)
+        with _confluence_errors():
+            client = _get_client()
+            effective_space = space_key or settings.CONFLUENCE_SPACE_KEY or ""
+            cql = f'text ~ "{query}" AND type = page'
+            if effective_space:
+                cql += f' AND space.key = "{effective_space}"'
+            results = client.cql(cql, limit=limit).get("results", [])
+            if not results:
+                return "No pages found."
+            lines = []
+            for r in results:
+                content = r.get("content", {})
+                lines.append(
+                    f"- ID: {content.get('id')} | Space: {content.get('space', {}).get('key')} | Title: {content.get('title')}"
+                )
+            return "\n".join(lines)
 
 
 class ConfluenceGetPageInput(BaseModel):
@@ -124,18 +183,19 @@ class ConfluenceGetPageTool(LoggedTool):
     args_schema: type[BaseModel] = ConfluenceGetPageInput
 
     def _run(self, page_id: str = "", title: str = "", space_key: str = "") -> str:
-        client = _get_client()
-        if page_id:
-            page = client.get_page_by_id(page_id, expand="body.storage")
-        elif title and space_key:
-            page = client.get_page_by_title(space_key, title, expand="body.storage")
-        else:
-            return "Error: provide page_id or both title and space_key."
-        if not page:
-            return "Page not found."
-        body_html = page.get("body", {}).get("storage", {}).get("value", "")
-        soup = BeautifulSoup(body_html, "lxml")
-        return f"Title: {page['title']}\nID: {page['id']}\n\n{soup.get_text(separator=chr(10))}"
+        with _confluence_errors():
+            client = _get_client()
+            if page_id:
+                page = client.get_page_by_id(page_id, expand="body.storage")
+            elif title and space_key:
+                page = client.get_page_by_title(space_key, title, expand="body.storage")
+            else:
+                return "Error: provide page_id or both title and space_key."
+            if not page:
+                return "Page not found."
+            body_html = page.get("body", {}).get("storage", {}).get("value", "")
+            soup = BeautifulSoup(body_html, "lxml")
+            return f"Title: {page['title']}\nID: {page['id']}\n\n{soup.get_text(separator=chr(10))}"
 
 
 class ConfluenceGetSectionInput(BaseModel):
@@ -153,16 +213,17 @@ class ConfluenceGetSectionTool(LoggedTool):
     args_schema: type[BaseModel] = ConfluenceGetSectionInput
 
     def _run(self, page_id: str, heading: str) -> str:
-        client = _get_client()
-        page = client.get_page_by_id(page_id, expand="body.storage")
-        if not page:
-            return "Page not found."
-        body_html = page.get("body", {}).get("storage", {}).get("value", "")
-        section_html = _get_section_html(body_html, heading)
-        if section_html is None:
-            return f"Section '{heading}' not found in page '{page['title']}'."
-        soup = BeautifulSoup(section_html, "lxml")
-        return soup.get_text(separator="\n")
+        with _confluence_errors():
+            client = _get_client()
+            page = client.get_page_by_id(page_id, expand="body.storage")
+            if not page:
+                return "Page not found."
+            body_html = page.get("body", {}).get("storage", {}).get("value", "")
+            section_html = _get_section_html(body_html, heading)
+            if section_html is None:
+                return f"Section '{heading}' not found in page '{page['title']}'."
+            soup = BeautifulSoup(section_html, "lxml")
+            return soup.get_text(separator="\n")
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +231,7 @@ class ConfluenceGetSectionTool(LoggedTool):
 # ---------------------------------------------------------------------------
 
 class ConfluenceCreatePageInput(BaseModel):
-    space_key: str = Field(description="Confluence space key where the page will be created (e.g. 'DEV')")
+    #space_key: str = Field(description="Confluence space key where the page will be created (e.g. 'DEV')")
     title: str = Field(description="Title of the new page")
     content_markdown: str = Field(description="Page content in Markdown format")
     parent_id: str = Field(default="", description="Optional parent page ID to nest the new page under")
@@ -179,22 +240,26 @@ class ConfluenceCreatePageInput(BaseModel):
 class ConfluenceCreatePageTool(LoggedTool):
     name: str = "ConfluenceCreatePage"
     description: str = (
-        "Create a new Confluence page in the given space. "
+        "Create a new Confluence page "
         "Write content in Markdown — it will be converted automatically. "
         "Optionally provide parent_id to nest it under an existing page."
     )
     args_schema: type[BaseModel] = ConfluenceCreatePageInput
 
-    def _run(self, space_key: str, title: str, content_markdown: str, parent_id: str = "") -> str:
-        client = _get_client()
-        body_html = _markdown_to_storage(content_markdown)
-        kwargs = {"space": space_key, "title": title, "body": body_html}
-        if parent_id:
-            kwargs["parent_id"] = parent_id
-        result = client.create_page(**kwargs)
-        page_id = result.get("id", "unknown")
-        page_url = result.get("_links", {}).get("webui", "")
-        return f"Page created. ID: {page_id}. URL: {settings.CONFLUENCE_URL}{page_url}"
+    def _run(self, title: str, content_markdown: str, parent_id: str = "") -> str:
+        with _confluence_errors():
+            client = _get_client()
+            effective_space = settings.CONFLUENCE_SPACE_KEY
+            # if not effective_space:
+            #     return "Error: space_key is required. Set CONFLUENCE_SPACE_KEY in config or pass space_key explicitly."
+            body_html = _markdown_to_storage(content_markdown)
+            kwargs = {"space": effective_space, "title": title, "body": body_html}
+            if parent_id:
+                kwargs["parent_id"] = parent_id
+            result = client.create_page(**kwargs)
+            page_id = result.get("id", "unknown")
+            page_url = result.get("_links", {}).get("webui", "")
+            return f"Page created. ID: {page_id}. URL: {settings.CONFLUENCE_URL}{page_url}"
 
 
 class ConfluenceUpdateSectionInput(BaseModel):
@@ -213,18 +278,19 @@ class ConfluenceUpdateSectionTool(LoggedTool):
     args_schema: type[BaseModel] = ConfluenceUpdateSectionInput
 
     def _run(self, page_id: str, heading: str, new_content_markdown: str) -> str:
-        client = _get_client()
-        page = client.get_page_by_id(page_id, expand="body.storage,version")
-        if not page:
-            return "Page not found."
-        body_html = page.get("body", {}).get("storage", {}).get("value", "")
-        new_content_html = _markdown_to_storage(new_content_markdown)
-        new_body = _replace_section_html(body_html, heading, new_content_html)
-        if new_body is None:
-            return f"Section '{heading}' not found. Use ConfluenceGetPage to check available headings."
-        version = page["version"]["number"] + 1
-        client.update_page(page_id=page_id, title=page["title"], body=new_body, version=version)
-        return f"Section '{heading}' updated successfully in page '{page['title']}'."
+        with _confluence_errors():
+            client = _get_client()
+            page = client.get_page_by_id(page_id, expand="body.storage,version")
+            if not page:
+                return "Page not found."
+            body_html = page.get("body", {}).get("storage", {}).get("value", "")
+            new_content_html = _markdown_to_storage(new_content_markdown)
+            new_body = _replace_section_html(body_html, heading, new_content_html)
+            if new_body is None:
+                return f"Section '{heading}' not found. Use ConfluenceGetPage to check available headings."
+            version = page["version"]["number"] + 1
+            client.update_page(page_id=page_id, title=page["title"], body=new_body, version=version)
+            return f"Section '{heading}' updated successfully in page '{page['title']}'."
 
 
 class ConfluenceAppendSectionInput(BaseModel):
@@ -244,16 +310,17 @@ class ConfluenceAppendSectionTool(LoggedTool):
     args_schema: type[BaseModel] = ConfluenceAppendSectionInput
 
     def _run(self, page_id: str, heading: str, content_markdown: str, heading_level: int = 2) -> str:
-        client = _get_client()
-        page = client.get_page_by_id(page_id, expand="body.storage,version")
-        if not page:
-            return "Page not found."
-        body_html = page.get("body", {}).get("storage", {}).get("value", "")
-        new_section = f"<h{heading_level}>{heading}</h{heading_level}>\n{_markdown_to_storage(content_markdown)}"
-        new_body = body_html + "\n" + new_section
-        version = page["version"]["number"] + 1
-        client.update_page(page_id=page_id, title=page["title"], body=new_body, version=version)
-        return f"Section '{heading}' appended to page '{page['title']}'."
+        with _confluence_errors():
+            client = _get_client()
+            page = client.get_page_by_id(page_id, expand="body.storage,version")
+            if not page:
+                return "Page not found."
+            body_html = page.get("body", {}).get("storage", {}).get("value", "")
+            new_section = f"<h{heading_level}>{heading}</h{heading_level}>\n{_markdown_to_storage(content_markdown)}"
+            new_body = body_html + "\n" + new_section
+            version = page["version"]["number"] + 1
+            client.update_page(page_id=page_id, title=page["title"], body=new_body, version=version)
+            return f"Section '{heading}' appended to page '{page['title']}'."
 
 
 # ---------------------------------------------------------------------------

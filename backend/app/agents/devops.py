@@ -18,8 +18,7 @@ class DevOpsAgent(BaseITAgent):
     goal = (
         "Analyze infrastructure issues, review Docker and CI/CD configurations, "
         "investigate service crashes, and apply fixes to config files. "
-        "Workflow: read logs/configs → identify root cause → fix config files using WriteLocalFile "
-        "(confirmation 'Written X bytes to' must appear) → document what was changed and why."
+        "Workflow: read logs/configs → identify root cause → apply targeted fixes → document what was changed and why."
     )
     backstory = (
         "You are a DevOps Engineer who keeps services running 24/7. "
@@ -41,7 +40,7 @@ class DevOpsAgent(BaseITAgent):
         "switch between branches",
         "list files in a local repository",
         "read file contents from a local repository",
-        "write or overwrite config files in a local repository (WriteLocalFile)",
+        "edit specific sections or line ranges in config files",
     ]
 
     def get_tools(self):

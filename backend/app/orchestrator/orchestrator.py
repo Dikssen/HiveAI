@@ -82,10 +82,6 @@ Rules:
 - Use at most 3-4 agents unless the request truly requires more
 - One agent is fine for simple requests
 - The final answer to the user must be in: {user_language}
-- File modification rule: if the task requires creating or modifying files in a repository,
-  the task description MUST end with this exact sentence:
-  "After writing the code, call WriteLocalFile to save every changed file to disk.
-   The confirmation 'Written X bytes to' MUST appear in your output — otherwise the task is not done."
 """
 
 EVALUATION_SYSTEM_PROMPT = """You are ChiefOrchestratorAgent reviewing the work done so far.
@@ -105,19 +101,6 @@ AGENT FAILURE DETECTION — check for this first:
 - If the output starts with "[AGENT_FAILED:" the agent returned a raw JSON tool call without executing it.
 - Always mark as NOT complete. Set next_agent to the same agent and instruct it:
   "The previous iteration failed to execute tools. Do NOT output JSON action blobs — actually run the tools and return their results."
-
-FILE WRITE VERIFICATION — apply this check whenever the request involves modifying or creating files:
-- Look for ANY of these patterns in the agent output (they all mean WriteLocalFile was called):
-    • "Written N bytes to"  (exact tool return string)
-    • "written … bytes"     (paraphrase with a number and "bytes")
-    • "written to … repository"
-    • "saved … to disk"
-    • "file written"
-- If NONE of those patterns appear and the task required file changes, the files were NOT saved to disk.
-- In that case mark as NOT complete, set next_agent to the same agent, and instruct it:
-  "The previous iteration produced code but did NOT call WriteLocalFile.
-   Read the code from the previous context and call WriteLocalFile now to save each file."
-- If ANY of those patterns appear, treat file writing as confirmed — do NOT request another write.
 
 Return ONLY valid JSON — no markdown fences, no extra text:
 
@@ -291,7 +274,7 @@ class Orchestrator(BaseOrchestrator):
     def _evaluate_result(self, user_message: str, all_outputs: list[dict], run_id: int) -> dict:
         system = EVALUATION_SYSTEM_PROMPT.format(agent_descriptions=get_agent_descriptions())
         outputs_text = "\n\n".join(
-            f"--- Iteration {o['iteration']} | {o['agent']} ---\n{o['output'][:3000]}"
+            f"--- Iteration {o['iteration']} | {o['agent']} ---\n{o['output']}"
             for o in all_outputs
         )
         context = f"User request:\n{user_message}\n\nWork done so far:\n{outputs_text}"
@@ -317,7 +300,7 @@ class Orchestrator(BaseOrchestrator):
 
         system = SYNTHESIS_SYSTEM_PROMPT.format(user_language=user_language)
         outputs_text = "\n\n".join(
-            f"--- Iteration {o['iteration']} | {o['agent']} ---\n{o['output'][:3000]}"
+            f"--- Iteration {o['iteration']} | {o['agent']} ---\n{o['output']}"
             for o in all_outputs
         )
         context = f"User request:\n{user_message}\n\nAgent outputs:\n{outputs_text}"
@@ -335,7 +318,7 @@ class Orchestrator(BaseOrchestrator):
             return ""
         parts = []
         for o in all_outputs:
-            parts.append(f"### Iteration {o['iteration']} — {o['agent']}\n{o['output'][:2000]}")
+            parts.append(f"### Iteration {o['iteration']} — {o['agent']}\n{o['output']}")
         return "\n\n".join(parts)
 
     def _is_unexecuted_action(self, output: str) -> bool:

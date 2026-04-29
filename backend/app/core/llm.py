@@ -34,10 +34,14 @@ def get_crewai_llm():
         )
 
 
-def get_langchain_llm(json_mode: bool = False):
+def get_langchain_llm(
+    json_mode: bool = False,
+    extra_body: dict | None = None,
+):
     """
     Return a LangChain chat model for direct LLM calls (orchestrator decision).
     json_mode=True requests JSON output from the model.
+    extra_body lets callers pass provider-specific OpenAI-compatible params.
     """
     if settings.LLM_PROVIDER == "ollama":
         from langchain_ollama import ChatOllama
@@ -49,14 +53,32 @@ def get_langchain_llm(json_mode: bool = False):
         if json_mode:
             kwargs["format"] = "json"
         return ChatOllama(**kwargs)
+
     else:
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(
-            model=settings.LLM_MODEL,
-            base_url=settings.LLM_BASE_URL,
-            api_key=settings.LLM_API_KEY or "sk-dummy",
-        )
+        merged_extra_body: dict = {}
+
+        # Текущая логика из твоего кода.
+        # Оставляем ее, чтобы не сломать провайдеров, которым нужен enable_thinking.
+        if not settings.LLM_ENABLE_THINKING:
+            merged_extra_body["enable_thinking"] = False
+
+        # Новая логика: разрешаем вызывающему коду передавать extra_body.
+        if extra_body:
+            merged_extra_body.update(extra_body)
+
+        kwargs: dict = {
+            "model": settings.LLM_MODEL,
+            "base_url": settings.LLM_BASE_URL,
+            "api_key": settings.LLM_API_KEY or "sk-dummy",
+            "extra_body": merged_extra_body or None,
+        }
+
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+
+        return ChatOpenAI(**kwargs)
 
 
 def check_llm_health() -> dict:

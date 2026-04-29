@@ -11,23 +11,21 @@ from app.tools.code_edit import (
     CodeReadRangeTool, CodeReadSymbolTool,
     CodeReplaceRangeTool, CodeReplaceSymbolTool, CodeInsertAtLineTool,
 )
+from app.tools.confluence import get_confluence_tools
 
 class BackendDeveloperAgent(BaseITAgent):
     name = "BackendDeveloperAgent"
     role = "Senior Backend Developer"
     goal = (
         "Analyze backend issues, read error logs, identify root causes, and fix code. "
-        "Workflow: clone repo → list files → read relevant files → implement fix → "
-        "save EVERY changed file using WriteLocalFile (confirmation 'Written X bytes to' must appear). "
-        "Never just describe changes in text — always write them to disk."
+        "Workflow: clone repo → list files → read relevant files → implement fix using block editing tools."
     )
     backstory = (
         "You are a Senior Backend Developer with deep expertise in Python, FastAPI, "
         "databases, and distributed systems. You read logs like a book, "
-        "spot bugs quickly, always explain the root cause before touching code, "
-        "and always save your changes to disk so others can review them."
+        "spot bugs quickly, and always explain the root cause before touching code."
     )
-    description = "Analyzes errors, reads logs, clones repos, reads and writes code files, proposes and applies fixes."
+    description = "Analyzes errors, reads logs, clones repos, reads and edits code files, proposes and applies fixes."
     capabilities = [
         "error log analysis",
         "root cause identification",
@@ -41,7 +39,7 @@ class BackendDeveloperAgent(BaseITAgent):
         "switch between branches",
         "list files in a local repository",
         "read file contents from a local repository",
-        "write or overwrite files in a local repository (WriteLocalFile)",
+        "edit specific functions, classes, or line ranges in code files",
     ]
 
     def get_tools(self):
@@ -52,4 +50,5 @@ class BackendDeveloperAgent(BaseITAgent):
             ListLocalFilesTool(), ReadLocalFileTool(), WriteLocalFileTool(),
             CodeReadRangeTool(), CodeReadSymbolTool(),
             CodeReplaceRangeTool(), CodeReplaceSymbolTool(), CodeInsertAtLineTool(),
+            *get_confluence_tools(),
         ]
