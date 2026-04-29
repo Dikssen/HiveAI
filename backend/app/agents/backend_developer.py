@@ -2,7 +2,7 @@ from app.agents.base import BaseITAgent
 from app.tools.read_logs import ReadLogsTool
 from app.tools.code_review import CodeReviewTool
 from app.tools.report_writer import ReportWriterTool
-
+from app.tools.git_serch import ListRepositoriesTool, SearchInRepositoryTool, ReadRepositoryFileTool
 
 class BackendDeveloperAgent(BaseITAgent):
     name = "BackendDeveloperAgent"
@@ -24,7 +24,11 @@ class BackendDeveloperAgent(BaseITAgent):
         "bug fix proposals",
         "backend architecture review",
         "API debugging",
+        "list all GitHub repositories",
+        "search code inside a specific GitHub repository",
+        "read file contents from a GitHub repository",
     ]
 
     def get_tools(self):
-        return [ReadLogsTool(), CodeReviewTool(), ReportWriterTool()]
+        return [ReadLogsTool(), CodeReviewTool(), ReportWriterTool(),
+                ListRepositoriesTool(), SearchInRepositoryTool(), ReadRepositoryFileTool()]

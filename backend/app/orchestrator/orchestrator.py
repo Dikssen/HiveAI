@@ -66,6 +66,7 @@ Rules:
 - Use at most 3-4 agents unless the request truly requires more
 - If the request is simple, one agent is fine
 - Agent names MUST match exactly from the list above
+- Communicating with agents only in English
 """
 
 

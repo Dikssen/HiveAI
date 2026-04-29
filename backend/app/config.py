@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     SAMPLE_DATA_PATH: str = "./sample_data"
 
+    GITHUB_TOKEN: Optional[str] = None
+
     class Config:
         env_file = ".env"
         extra = "ignore"

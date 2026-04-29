@@ -2,7 +2,7 @@ from app.agents.base import BaseITAgent
 from app.tools.read_logs import ReadLogsTool
 from app.tools.docker_inspect import DockerInspectTool
 from app.tools.report_writer import ReportWriterTool
-
+from app.tools.git_serch import ListRepositoriesTool, SearchInRepositoryTool
 
 class DevOpsAgent(BaseITAgent):
     name = "DevOpsAgent"
@@ -18,7 +18,7 @@ class DevOpsAgent(BaseITAgent):
         "You look at logs, configs, and metrics to find the root cause of outages and "
         "prevent them from happening again."
     )
-    description = "Analyzes Docker, CI/CD, logs, env vars. Proposes infrastructure and deployment fixes."
+    description = "Analyzes Docker, CI/CD, logs, env vars, and GitHub repositories. Proposes infrastructure and deployment fixes."
     capabilities = [
         "Docker configuration review",
         "CI/CD pipeline analysis",
@@ -26,7 +26,9 @@ class DevOpsAgent(BaseITAgent):
         "service crash analysis",
         "infrastructure improvement proposals",
         "deployment strategy advice",
+        "list all GitHub repositories with descriptions",
+        "search code inside a specific GitHub repository",
     ]
 
     def get_tools(self):
-        return [ReadLogsTool(), DockerInspectTool(), ReportWriterTool()]
+        return [ReadLogsTool(), DockerInspectTool(), ReportWriterTool(), ListRepositoriesTool(), SearchInRepositoryTool()]

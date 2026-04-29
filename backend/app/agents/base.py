@@ -39,7 +39,7 @@ class BaseITAgent(ABC):
             llm=llm,
             verbose=True,
             allow_delegation=False,
-            max_iter=5,
+            max_iter=40,
         )
 
     def describe(self) -> str:

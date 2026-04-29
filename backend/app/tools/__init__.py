@@ -3,6 +3,8 @@ from app.tools.support_analytics import SupportAnalyticsTool
 from app.tools.code_review import CodeReviewTool
 from app.tools.docker_inspect import DockerInspectTool
 from app.tools.report_writer import ReportWriterTool
+from app.tools.git_serch import ListRepositoriesTool
+from app.tools.git_serch import SearchInRepositoryTool
 
 __all__ = [
     "ReadLogsTool",
@@ -10,4 +12,6 @@ __all__ = [
     "CodeReviewTool",
     "DockerInspectTool",
     "ReportWriterTool",
+    "ListRepositoriesTool",
+    "SearchInRepositoryTool",
 ]

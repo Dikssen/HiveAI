@@ -43,6 +43,7 @@ services:
       - LLM_SUPPORTS_TOOLS=${LLM_SUPPORTS_TOOLS:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SAMPLE_DATA_PATH=/app/sample_data
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,6 +71,7 @@ services:
       - LLM_SUPPORTS_TOOLS=${LLM_SUPPORTS_TOOLS:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SAMPLE_DATA_PATH=/app/sample_data
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
