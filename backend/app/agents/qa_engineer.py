@@ -1,6 +1,10 @@
 from app.agents.base import BaseITAgent
 from app.tools.code_review import CodeReviewTool
 from app.tools.report_writer import ReportWriterTool
+from app.tools.local_repo import (
+    CloneOrUpdateRepoTool, ListBranchesTool, SwitchBranchTool,
+    ListLocalFilesTool, ReadLocalFileTool,
+)
 
 
 class QAEngineerAgent(BaseITAgent):
@@ -23,7 +27,16 @@ class QAEngineerAgent(BaseITAgent):
         "solution verification",
         "regression risk analysis",
         "acceptance criteria writing",
+        "clone or update a GitHub repository locally",
+        "list branches of a repository",
+        "switch between branches",
+        "list files in a local repository",
+        "read file contents from a local repository",
     ]
 
     def get_tools(self):
-        return [CodeReviewTool(), ReportWriterTool()]
+        return [
+            CodeReviewTool(), ReportWriterTool(),
+            CloneOrUpdateRepoTool(), ListBranchesTool(), SwitchBranchTool(),
+            ListLocalFilesTool(), ReadLocalFileTool(),
+        ]

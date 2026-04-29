@@ -1,5 +1,15 @@
+import json
 from celery import Celery
+from kombu.serialization import register
 from app.config import settings
+
+register(
+    "json_unicode",
+    lambda obj: json.dumps(obj, ensure_ascii=False),
+    json.loads,
+    content_type="application/json",
+    content_encoding="utf-8",
+)
 
 celery_app = Celery(
     "it_company",
@@ -9,9 +19,9 @@ celery_app = Celery(
 )
 
 celery_app.conf.update(
-    task_serializer="json",
-    result_serializer="json",
-    accept_content=["json"],
+    task_serializer="json_unicode",
+    result_serializer="json_unicode",
+    accept_content=["application/json"],
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,

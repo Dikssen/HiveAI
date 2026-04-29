@@ -12,6 +12,7 @@ Flow:
 import json
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 import structlog
@@ -28,10 +29,18 @@ from app.models.worker_log import WorkerLog
 
 logger = structlog.get_logger()
 
+REVIEW_LOOP_AGENTS = {"BackendDeveloperAgent", "QAEngineerAgent"}
+MAX_REVIEW_ITERATIONS = 3
+REPORTS_ROOT = Path("/app/repos/reports")
 
-def _decode_unicode_escapes(text: str) -> str:
-    """Some LLMs return \\uXXXX escape sequences as literal text instead of real chars."""
-    return re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), text)
+
+def _detect_language(text: str) -> str:
+    cyrillic = len(re.findall(r'[а-яА-ЯёЁіІїЇєЄґҐ]', text))
+    latin = len(re.findall(r'[a-zA-Z]', text))
+    if cyrillic > latin:
+        ukrainian = len(re.findall(r'[іІїЇєЄґҐ]', text))
+        return "Ukrainian" if ukrainian > 0 else "Russian"
+    return "English"
 
 
 # -------------------------------------------------------------------
@@ -72,7 +81,8 @@ Rules:
 - Use at most 3-4 agents unless the request truly requires more
 - If the request is simple, one agent is fine
 - Agent names MUST match exactly from the list above
-- Communicating with agents only in English
+- All task descriptions for agents MUST be written in English
+- The final answer to the user must be in: {user_language}
 """
 
 
@@ -224,10 +234,12 @@ class Orchestrator:
         user_message: str,
         chat_history: str,
         orchestrator_run_id: int,
+        user_language: str = "English",
     ) -> dict:
         agent_descriptions = get_agent_descriptions()
         system_prompt = ORCHESTRATOR_SYSTEM_PROMPT.format(
-            agent_descriptions=agent_descriptions
+            agent_descriptions=agent_descriptions,
+            user_language=user_language,
         )
         context = (
             f"Chat history:\n{chat_history}\n\nCurrent request: {user_message}"
@@ -273,6 +285,154 @@ class Orchestrator:
         return decision
 
     # ------------------------------------------------------------------
+    # Single-agent runner (helper for review loop)
+    # ------------------------------------------------------------------
+
+    def _run_single_agent(
+        self,
+        agent_name: str,
+        task_description: str,
+        expected_output: str,
+        crewai_llm: Any,
+        supports_tools: bool,
+    ) -> str:
+        agent_impl = AGENT_REGISTRY[agent_name]
+        crewai_agent = agent_impl.get_crewai_agent(llm=crewai_llm, with_tools=supports_tools)
+        crew_task = CrewTask(
+            description=task_description,
+            expected_output=expected_output,
+            agent=crewai_agent,
+        )
+        crew = Crew(
+            agents=[crewai_agent],
+            tasks=[crew_task],
+            process=Process.sequential,
+            verbose=True,
+        )
+        result = crew.kickoff()
+        if hasattr(crew_task, "output") and crew_task.output is not None:
+            out = crew_task.output
+            return out.raw if hasattr(out, "raw") else str(out)
+        return str(result) if result else ""
+
+    # ------------------------------------------------------------------
+    # Review loop: Backend → QA → Backend... until QA approves
+    # ------------------------------------------------------------------
+
+    def _run_review_loop(
+        self,
+        chat_id: int,
+        backend_td: dict,
+        qa_td: dict,
+        crewai_llm: Any,
+        supports_tools: bool,
+        orchestrator_run_id: int,
+        agent_outputs: list,
+        tasks_created_log: list,
+        user_language: str = "English",
+    ) -> str:
+        report_dir = REPORTS_ROOT / f"chat_{chat_id}"
+        report_dir.mkdir(parents=True, exist_ok=True)
+
+        qa_feedback = ""
+        final_output = ""
+
+        for iteration in range(1, MAX_REVIEW_ITERATIONS + 1):
+            self._log(
+                orchestrator_run_id, "INFO",
+                f"Review loop iteration {iteration}/{MAX_REVIEW_ITERATIONS}",
+            )
+
+            # --- BackendDeveloperAgent ---
+            if qa_feedback:
+                backend_desc = (
+                    f"{backend_td['description']}\n\n"
+                    f"### QA Feedback from Iteration {iteration - 1}\n"
+                    f"{qa_feedback}\n\n"
+                    f"Address all QA findings above and improve the solution."
+                )
+            else:
+                backend_desc = backend_td["description"]
+
+            backend_ar = self._create_agent_run(
+                chat_id=chat_id,
+                agent_name="BackendDeveloperAgent",
+                task_description=f"[Iteration {iteration}] {backend_desc[:120]}",
+                input_payload={"iteration": iteration, "description": backend_desc},
+            )
+            self._update_agent_run(backend_ar, "running")
+
+            backend_output = self._run_single_agent(
+                "BackendDeveloperAgent",
+                backend_desc,
+                backend_td.get("expected_output", "Analysis and proposed code fixes"),
+                crewai_llm,
+                supports_tools,
+            )
+
+            report_path = report_dir / f"iteration_{iteration}_backend.md"
+            report_path.write_text(backend_output)
+
+            self._update_agent_run(
+                backend_ar, "completed",
+                output={"result": backend_output[:8000], "iteration": iteration, "report": str(report_path)},
+            )
+            agent_outputs.append({"agent": "BackendDeveloperAgent", "output": backend_output, "status": "completed", "iteration": iteration})
+            tasks_created_log.append({"agent": "BackendDeveloperAgent", "description": f"Iteration {iteration}", "status": "completed"})
+
+            # --- QAEngineerAgent ---
+            qa_desc = (
+                f"{qa_td['description']}\n\n"
+                f"### Backend Developer's Work — Iteration {iteration}\n"
+                f"{backend_output[:5000]}\n\n"
+                f"If the implementation is complete and correct, start your response with 'APPROVED: '.\n"
+                f"Otherwise list the specific issues that still need to be fixed.\n\n"
+                f"IMPORTANT: Write your final response in {user_language}."
+            )
+
+            qa_ar = self._create_agent_run(
+                chat_id=chat_id,
+                agent_name="QAEngineerAgent",
+                task_description=f"[Iteration {iteration}] Review Backend work",
+                input_payload={"iteration": iteration, "description": qa_desc},
+            )
+            self._update_agent_run(qa_ar, "running")
+
+            qa_output = self._run_single_agent(
+                "QAEngineerAgent",
+                qa_desc,
+                qa_td.get("expected_output", "QA review with approval or list of remaining issues"),
+                crewai_llm,
+                supports_tools,
+            )
+
+            qa_report_path = report_dir / f"iteration_{iteration}_qa.md"
+            qa_report_path.write_text(qa_output)
+
+            is_approved = qa_output.strip().upper().startswith("APPROVED")
+            self._update_agent_run(
+                qa_ar, "completed",
+                output={"result": qa_output[:8000], "iteration": iteration, "approved": is_approved},
+            )
+            self._log(
+                orchestrator_run_id, "INFO",
+                f"Iteration {iteration} QA result",
+                {"approved": is_approved, "preview": qa_output[:200]},
+            )
+
+            agent_outputs.append({"agent": "QAEngineerAgent", "output": qa_output, "status": "completed", "iteration": iteration})
+            tasks_created_log.append({"agent": "QAEngineerAgent", "description": f"Iteration {iteration} review", "status": "completed"})
+
+            qa_feedback = qa_output
+            final_output = qa_output
+
+            if is_approved:
+                self._log(orchestrator_run_id, "INFO", f"QA approved on iteration {iteration}")
+                break
+
+        return final_output
+
+    # ------------------------------------------------------------------
     # Main run
     # ------------------------------------------------------------------
 
@@ -291,8 +451,9 @@ class Orchestrator:
         self._update_agent_run(orchestrator_run, "running")
 
         try:
+            user_language = _detect_language(user_message)
             chat_history = self._get_chat_history(chat_id)
-            decision = self._make_decision(user_message, chat_history, orchestrator_run.id)
+            decision = self._make_decision(user_message, chat_history, orchestrator_run.id, user_language)
 
             reasoning = decision.get("reasoning", "")
             task_defs = decision.get("tasks", [])
@@ -323,109 +484,103 @@ class Orchestrator:
                     }
                 ]
 
-            # Create AgentRun records before starting crew
-            for td in valid_task_defs:
-                agent_name = td["agent"]
-                ar = self._create_agent_run(
-                    chat_id=chat_id,
-                    agent_name=agent_name,
-                    task_description=td["description"],
-                    input_payload={
-                        "description": td["description"],
-                        "expected_output": td.get("expected_output", ""),
-                    },
-                )
-                agent_run_map[agent_name] = ar
-
-            # Build CrewAI agents and tasks
             crewai_llm = self._crewai()
             supports_tools = settings.LLM_SUPPORTS_TOOLS
-
-            crew_agents = []
-            crew_tasks: list[CrewTask] = []
-
-            for td in valid_task_defs:
-                agent_name = td["agent"]
-                agent_impl = AGENT_REGISTRY[agent_name]
-
-                crewai_agent = agent_impl.get_crewai_agent(
-                    llm=crewai_llm, with_tools=supports_tools
-                )
-                crew_agents.append(crewai_agent)
-
-                # Pass completed tasks as context so agents can build on each other
-                task_context = crew_tasks.copy() if crew_tasks else None
-                crewai_task = CrewTask(
-                    description=td["description"],
-                    expected_output=td.get("expected_output", "A detailed response"),
-                    agent=crewai_agent,
-                    context=task_context,
-                )
-                crew_tasks.append(crewai_task)
-
-                self._update_agent_run(agent_run_map[agent_name], "running")
-
-            self._log(
-                orchestrator_run.id,
-                "INFO",
-                "CrewAI crew starting",
-                {
-                    "agents": [td["agent"] for td in valid_task_defs],
-                    "process": "sequential",
-                },
-            )
-
-            # Run the crew
-            crew = Crew(
-                agents=crew_agents,
-                tasks=crew_tasks,
-                process=Process.sequential,
-                verbose=True,
-            )
-            crew_result = crew.kickoff()
-
-            # Collect per-task outputs and update DB records
             tasks_created_log = []
-            for td, crew_task in zip(valid_task_defs, crew_tasks):
-                agent_name = td["agent"]
-                ar = agent_run_map[agent_name]
 
-                # Extract output text from CrewAI task
-                task_output_text = ""
-                if hasattr(crew_task, "output") and crew_task.output is not None:
-                    out = crew_task.output
-                    task_output_text = (
-                        out.raw if hasattr(out, "raw") else str(out)
+            # Detect whether review loop is needed
+            selected_names = {td["agent"] for td in valid_task_defs}
+            use_review_loop = REVIEW_LOOP_AGENTS.issubset(selected_names)
+
+            if use_review_loop:
+                backend_td = next(td for td in valid_task_defs if td["agent"] == "BackendDeveloperAgent")
+                qa_td = next(td for td in valid_task_defs if td["agent"] == "QAEngineerAgent")
+                other_tds = [td for td in valid_task_defs if td["agent"] not in REVIEW_LOOP_AGENTS]
+
+                self._log(orchestrator_run.id, "INFO", "Starting review loop", {"max_iterations": MAX_REVIEW_ITERATIONS})
+
+                # Run any other agents (e.g. ProjectManager) with standard sequential crew first
+                if other_tds:
+                    for td in other_tds:
+                        ar = self._create_agent_run(
+                            chat_id=chat_id,
+                            agent_name=td["agent"],
+                            task_description=td["description"],
+                            input_payload={"description": td["description"]},
+                        )
+                        agent_run_map[td["agent"]] = ar
+                        self._update_agent_run(ar, "running")
+                        out = self._run_single_agent(
+                            td["agent"], td["description"],
+                            td.get("expected_output", "A detailed response"),
+                            crewai_llm, supports_tools,
+                        )
+                        self._update_agent_run(ar, "completed", output={"result": out[:8000]})
+                        agent_outputs.append({"agent": td["agent"], "output": out, "status": "completed"})
+                        tasks_created_log.append({"agent": td["agent"], "description": td["description"], "status": "completed"})
+
+                final_answer = self._run_review_loop(
+                    chat_id=chat_id,
+                    backend_td=backend_td,
+                    qa_td=qa_td,
+                    crewai_llm=crewai_llm,
+                    supports_tools=supports_tools,
+                    orchestrator_run_id=orchestrator_run.id,
+                    agent_outputs=agent_outputs,
+                    tasks_created_log=tasks_created_log,
+                    user_language=user_language,
+                )
+
+            else:
+                # Standard sequential crew
+                for td in valid_task_defs:
+                    agent_name = td["agent"]
+                    ar = self._create_agent_run(
+                        chat_id=chat_id,
+                        agent_name=agent_name,
+                        task_description=td["description"],
+                        input_payload={"description": td["description"], "expected_output": td.get("expected_output", "")},
                     )
-                if not task_output_text:
-                    task_output_text = str(crew_result) if crew_result else ""
+                    agent_run_map[agent_name] = ar
 
-                self._update_agent_run(
-                    ar,
-                    "completed",
-                    output={"result": task_output_text[:8000]},
-                )
-                self._log(
-                    ar.id,
-                    "INFO",
-                    f"Agent {agent_name} completed successfully",
-                    {"output_preview": task_output_text[:300]},
-                )
+                crew_agents = []
+                crew_tasks: list[CrewTask] = []
+                last_idx = len(valid_task_defs) - 1
+                for i, td in enumerate(valid_task_defs):
+                    agent_name = td["agent"]
+                    crewai_agent = AGENT_REGISTRY[agent_name].get_crewai_agent(llm=crewai_llm, with_tools=supports_tools)
+                    crew_agents.append(crewai_agent)
+                    task_context = crew_tasks.copy() if crew_tasks else None
+                    desc = td["description"]
+                    if i == last_idx and user_language != "English":
+                        desc += f"\n\nIMPORTANT: Write your final response in {user_language}."
+                    crew_tasks.append(CrewTask(
+                        description=desc,
+                        expected_output=td.get("expected_output", "A detailed response"),
+                        agent=crewai_agent,
+                        context=task_context,
+                    ))
+                    self._update_agent_run(agent_run_map[agent_name], "running")
 
-                agent_outputs.append(
-                    {"agent": agent_name, "output": task_output_text, "status": "completed"}
-                )
-                tasks_created_log.append(
-                    {
-                        "agent": agent_name,
-                        "description": td["description"],
-                        "status": "completed",
-                    }
-                )
+                self._log(orchestrator_run.id, "INFO", "CrewAI crew starting", {"agents": [td["agent"] for td in valid_task_defs]})
 
-            # Final answer is the last crew task's output
-            final_answer = str(crew_result) if crew_result else "Task completed."
-            final_answer = _decode_unicode_escapes(final_answer)
+                crew_result = Crew(agents=crew_agents, tasks=crew_tasks, process=Process.sequential, verbose=True).kickoff()
+
+                for td, crew_task in zip(valid_task_defs, crew_tasks):
+                    agent_name = td["agent"]
+                    ar = agent_run_map[agent_name]
+                    task_output_text = ""
+                    if hasattr(crew_task, "output") and crew_task.output is not None:
+                        out = crew_task.output
+                        task_output_text = out.raw if hasattr(out, "raw") else str(out)
+                    if not task_output_text:
+                        task_output_text = str(crew_result) if crew_result else ""
+                    self._update_agent_run(ar, "completed", output={"result": task_output_text[:8000]})
+                    self._log(ar.id, "INFO", f"Agent {agent_name} completed successfully", {"output_preview": task_output_text[:300]})
+                    agent_outputs.append({"agent": agent_name, "output": task_output_text, "status": "completed"})
+                    tasks_created_log.append({"agent": agent_name, "description": td["description"], "status": "completed"})
+
+                final_answer = str(crew_result) if crew_result else "Task completed."
 
             # Persist as assistant message
             self.db.add(
