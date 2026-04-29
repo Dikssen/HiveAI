@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const mdComponents = {
   // Keep links safe (open in new tab)
@@ -49,6 +50,18 @@ const mdComponents = {
   li: ({ children }) => <li style={{ margin: "2px 0" }}>{children}</li>,
   hr: () => <hr style={{ border: "none", borderTop: "1px solid rgba(0,0,0,0.1)", margin: "8px 0" }} />,
   strong: ({ children }) => <strong style={{ fontWeight: 600 }}>{children}</strong>,
+  table: ({ children }) => (
+    <div style={{ overflowX: "auto", margin: "8px 0" }}>
+      <table style={{ borderCollapse: "collapse", fontSize: 13, width: "100%" }}>
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ children }) => <thead style={{ background: "rgba(0,0,0,0.06)" }}>{children}</thead>,
+  tbody: ({ children }) => <tbody>{children}</tbody>,
+  tr:   ({ children }) => <tr style={{ borderBottom: "1px solid rgba(0,0,0,0.08)" }}>{children}</tr>,
+  th:   ({ children }) => <th style={{ padding: "6px 10px", textAlign: "left", fontWeight: 600, whiteSpace: "nowrap" }}>{children}</th>,
+  td:   ({ children }) => <td style={{ padding: "5px 10px" }}>{children}</td>,
 };
 
 function Message({ msg }) {
@@ -105,7 +118,7 @@ function Message({ msg }) {
           <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
         ) : (
           // Agent/assistant messages: render markdown
-          <Markdown components={mdComponents}>{msg.content}</Markdown>
+          <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{msg.content}</Markdown>
         )}
 
         <div

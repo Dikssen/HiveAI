@@ -18,3 +18,4 @@ class Task(Base):
     )
 
     chat = relationship("Chat", back_populates="tasks")
+    agent_runs = relationship("AgentRun", back_populates="task")

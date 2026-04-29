@@ -182,13 +182,23 @@ class Orchestrator(BaseOrchestrator):
         self.db.commit()
         getattr(logger, level.lower(), logger.info)(message, **(meta or {}))
 
-    def _create_agent_run(self, chat_id: int, agent_name: str, task_description: str, input_payload: dict) -> AgentRun:
+    def _create_agent_run(
+        self,
+        chat_id: int,
+        agent_name: str,
+        task_description: str,
+        input_payload: dict,
+        task_id: Optional[int] = None,
+        parent_run_id: Optional[int] = None,
+    ) -> AgentRun:
         ar = AgentRun(
             chat_id=chat_id,
             agent_name=agent_name,
             task_description=task_description,
             status="pending",
             input_payload=input_payload,
+            task_id=task_id,
+            parent_run_id=parent_run_id,
         )
         self.db.add(ar)
         self.db.commit()
@@ -380,8 +390,9 @@ class Orchestrator(BaseOrchestrator):
         orchestrator_run = self._create_agent_run(
             chat_id=chat_id,
             agent_name="ChiefOrchestratorAgent",
-            task_description=f"Orchestrate: {user_message[:120]}",
+            task_description=f"Orchestrate: {user_message}",
             input_payload={"user_message": user_message, "task_id": task_id},
+            task_id=task_id,
         )
         self._update_agent_run(orchestrator_run, "running")
 
@@ -427,18 +438,31 @@ class Orchestrator(BaseOrchestrator):
 
                 for td in current_tasks:
                     agent_name = td["agent"]
+                    task_desc = td["description"]
+                    full_prompt = (
+                        f"## Context from previous work\n\n{prior_context}\n\n"
+                        f"## Your task\n\n{task_desc}"
+                        if prior_context else task_desc
+                    )
                     ar = self._create_agent_run(
                         chat_id=chat_id,
                         agent_name=agent_name,
-                        task_description=f"[Iter {iteration}] {td['description'][:100]}",
-                        input_payload={"iteration": iteration, "description": td["description"]},
+                        task_description=f"[Iter {iteration}] {task_desc}",
+                        input_payload={
+                            "iteration": iteration,
+                            "task": task_desc,
+                            "prior_context": prior_context,
+                            "full_prompt": full_prompt,
+                        },
+                        task_id=task_id,
+                        parent_run_id=orchestrator_run.id,
                     )
                     active_runs[agent_name] = ar
                     self._update_agent_run(ar, "running")
 
                     output = self._run_single_agent(
                         agent_name=agent_name,
-                        task_description=td["description"],
+                        task_description=task_desc,
                         expected_output=td.get("expected_output", "A detailed response"),
                         supports_tools=supports_tools,
                         prior_context=prior_context,

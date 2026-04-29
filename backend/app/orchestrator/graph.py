@@ -118,17 +118,30 @@ class LangGraphOrchestrator(BaseOrchestrator):
 
             for td in state["current_tasks"]:
                 agent_name = td["agent"]
+                task_desc = td["description"]
+                full_prompt = (
+                    f"## Context from previous work\n\n{prior_context}\n\n"
+                    f"## Your task\n\n{task_desc}"
+                    if prior_context else task_desc
+                )
                 ar = impl._create_agent_run(
                     chat_id=state["chat_id"],
                     agent_name=agent_name,
-                    task_description=f"[Iter {iteration}] {td['description'][:100]}",
-                    input_payload={"iteration": iteration, "description": td["description"]},
+                    task_description=f"[Iter {iteration}] {task_desc}",
+                    input_payload={
+                        "iteration": iteration,
+                        "task": task_desc,
+                        "prior_context": prior_context,
+                        "full_prompt": full_prompt,
+                    },
+                    task_id=state["task_id"],
+                    parent_run_id=state["orchestrator_run_id"],
                 )
                 impl._update_agent_run(ar, "running")
 
                 output = impl._run_single_agent(
                     agent_name=agent_name,
-                    task_description=td["description"],
+                    task_description=task_desc,
                     expected_output=td.get("expected_output", "A detailed response"),
                     supports_tools=supports_tools,
                     prior_context=prior_context,
@@ -220,7 +233,7 @@ class LangGraphOrchestrator(BaseOrchestrator):
         orchestrator_run = impl._create_agent_run(
             chat_id=chat_id,
             agent_name="ChiefOrchestratorAgent",
-            task_description=f"Orchestrate: {user_message[:120]}",
+            task_description=f"Orchestrate: {user_message}",
             input_payload={"user_message": user_message, "task_id": task_id},
         )
         impl._update_agent_run(orchestrator_run, "running")

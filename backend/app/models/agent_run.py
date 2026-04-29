@@ -8,11 +8,13 @@ class AgentRun(Base):
     __tablename__ = "agent_runs"
 
     id = Column(Integer, primary_key=True, index=True)
-    chat_id = Column(Integer, ForeignKey("chats.id", ondelete="CASCADE"), nullable=False)
+    chat_id = Column(Integer, ForeignKey("chats.id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True)
+    parent_run_id = Column(Integer, ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True)
     agent_name = Column(String(200), nullable=False)
     task_description = Column(Text, nullable=True)
     # pending / running / completed / failed
-    status = Column(String(50), nullable=False, default="pending")
+    status = Column(String(50), nullable=False, default="pending", index=True)
     input_payload = Column(JSON, nullable=True)
     output_payload = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
@@ -21,4 +23,16 @@ class AgentRun(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     chat = relationship("Chat", back_populates="agent_runs")
+    task = relationship("Task", back_populates="agent_runs")
     logs = relationship("WorkerLog", back_populates="agent_run", order_by="WorkerLog.created_at")
+    parent_run = relationship(
+        "AgentRun",
+        remote_side="AgentRun.id",
+        foreign_keys="[AgentRun.parent_run_id]",
+        back_populates="child_runs",
+    )
+    child_runs = relationship(
+        "AgentRun",
+        foreign_keys="[AgentRun.parent_run_id]",
+        back_populates="parent_run",
+    )
