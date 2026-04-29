@@ -135,67 +135,131 @@ def _replace_section_html(page_body: str, heading: str, new_content_html: str) -
 
 class ConfluenceSearchInput(BaseModel):
     query: str = Field(description="Full-text search query")
-    space_key: str = Field(default="", description="Optional Confluence space key to limit search (e.g. 'DEV')")
     limit: int = Field(default=10, description="Maximum number of results to return")
 
 
 class ConfluenceSearchTool(LoggedTool):
     name: str = "ConfluenceSearch"
     description: str = (
-        "Search Confluence pages by keywords. "
-        "Returns a list of matching pages with their IDs, titles, and space keys. "
+        "Search Confluence pages by keywords within the configured space. "
+        "Returns a list of matching pages with their IDs and titles. "
         "Use this to find the right page before reading or editing it."
     )
     args_schema: type[BaseModel] = ConfluenceSearchInput
 
-    def _run(self, query: str, space_key: str = "", limit: int = 10) -> str:
+    def _run(self, query: str, limit: int = 10) -> str:
         with _confluence_errors():
             client = _get_client()
-            effective_space = space_key or settings.CONFLUENCE_SPACE_KEY or ""
+            space = settings.CONFLUENCE_SPACE_KEY or ""
             cql = f'text ~ "{query}" AND type = page'
-            if effective_space:
-                cql += f' AND space.key = "{effective_space}"'
+            if space:
+                cql += f' AND space.key = "{space}"'
             results = client.cql(cql, limit=limit).get("results", [])
             if not results:
                 return "No pages found."
             lines = []
             for r in results:
                 content = r.get("content", {})
-                lines.append(
-                    f"- ID: {content.get('id')} | Space: {content.get('space', {}).get('key')} | Title: {content.get('title')}"
-                )
+                lines.append(f"- ID: {content.get('id')} | Title: {content.get('title')}")
             return "\n".join(lines)
 
 
 class ConfluenceGetPageInput(BaseModel):
     page_id: str = Field(default="", description="Confluence page ID (preferred)")
     title: str = Field(default="", description="Page title (used if page_id is not provided)")
-    space_key: str = Field(default="", description="Space key — required when searching by title")
 
 
 class ConfluenceGetPageTool(LoggedTool):
     name: str = "ConfluenceGetPage"
     description: str = (
         "Read the full content of a Confluence page. "
-        "Provide page_id (fastest) or title+space_key. "
+        "Provide page_id (fastest) or title (searches within the configured space). "
         "Returns the page content as plain text with headings preserved."
     )
     args_schema: type[BaseModel] = ConfluenceGetPageInput
 
-    def _run(self, page_id: str = "", title: str = "", space_key: str = "") -> str:
+    def _run(self, page_id: str = "", title: str = "") -> str:
         with _confluence_errors():
             client = _get_client()
             if page_id:
                 page = client.get_page_by_id(page_id, expand="body.storage")
-            elif title and space_key:
-                page = client.get_page_by_title(space_key, title, expand="body.storage")
+            elif title:
+                space = settings.CONFLUENCE_SPACE_KEY or ""
+                if not space:
+                    return "Error: provide page_id, or set CONFLUENCE_SPACE_KEY to search by title."
+                page = client.get_page_by_title(space, title, expand="body.storage")
             else:
-                return "Error: provide page_id or both title and space_key."
+                return "Error: provide page_id or title."
             if not page:
                 return "Page not found."
             body_html = page.get("body", {}).get("storage", {}).get("value", "")
             soup = BeautifulSoup(body_html, "lxml")
             return f"Title: {page['title']}\nID: {page['id']}\n\n{soup.get_text(separator=chr(10))}"
+
+
+class ConfluenceGetSpaceRootInput(BaseModel):
+    limit: int = Field(default=50, description="Maximum number of top-level pages to return")
+
+
+class ConfluenceGetSpaceRootTool(LoggedTool):
+    name: str = "ConfluenceGetSpaceRoot"
+    description: str = (
+        "List the top-level pages of the configured Confluence space. "
+        "Use this to understand the space structure before deciding where to create a new page. "
+        "Returns page IDs, titles, and whether each page has children."
+    )
+    args_schema: type[BaseModel] = ConfluenceGetSpaceRootInput
+
+    def _run(self, limit: int = 50) -> str:
+        with _confluence_errors():
+            client = _get_client()
+            space = settings.CONFLUENCE_SPACE_KEY or ""
+            if not space:
+                return "Error: CONFLUENCE_SPACE_KEY is not set in config."
+            space_info = client.get_space(space, expand="homepage")
+            homepage = space_info.get("homepage", {})
+            homepage_id = homepage.get("id")
+            if not homepage_id:
+                return f"Could not find homepage for space '{space}'."
+            children = client.get_child_pages(homepage_id)
+            if not children:
+                return f"Space '{space}' has no top-level pages under the homepage."
+            lines = [f"Space: {space} (homepage ID: {homepage_id})", "Top-level pages:"]
+            for page in children[:limit]:
+                has_children = "  [has children]" if page.get("childTypes", {}).get("page", {}).get("value") else ""
+                lines.append(f"  - ID: {page['id']} | {page['title']}{has_children}")
+            return "\n".join(lines)
+
+
+class ConfluenceGetChildPagesInput(BaseModel):
+    page_id: str = Field(description="ID of the parent page whose children to list")
+    limit: int = Field(default=50, description="Maximum number of child pages to return")
+
+
+class ConfluenceGetChildPagesTool(LoggedTool):
+    name: str = "ConfluenceGetChildPages"
+    description: str = (
+        "List the direct child pages of a given Confluence page. "
+        "Use this to navigate the page hierarchy and find the right parent "
+        "before creating or editing a page. "
+        "Returns IDs, titles, and whether each child has further children."
+    )
+    args_schema: type[BaseModel] = ConfluenceGetChildPagesInput
+
+    def _run(self, page_id: str, limit: int = 50) -> str:
+        with _confluence_errors():
+            client = _get_client()
+            parent = client.get_page_by_id(page_id)
+            if not parent:
+                return f"Page {page_id} not found."
+            children = client.get_child_pages(page_id)
+            if not children:
+                return f"Page '{parent['title']}' (ID: {page_id}) has no child pages."
+            lines = [f"Children of '{parent['title']}' (ID: {page_id}):"]
+            for page in children[:limit]:
+                has_children = "  [has children]" if page.get("childTypes", {}).get("page", {}).get("value") else ""
+                lines.append(f"  - ID: {page['id']} | {page['title']}{has_children}")
+            return "\n".join(lines)
 
 
 class ConfluenceGetSectionInput(BaseModel):
@@ -331,6 +395,8 @@ def get_confluence_tools() -> list:
     """Return the appropriate set of Confluence tools based on config."""
     tools = [
         ConfluenceSearchTool(),
+        ConfluenceGetSpaceRootTool(),
+        ConfluenceGetChildPagesTool(),
         ConfluenceGetPageTool(),
         ConfluenceGetSectionTool(),
     ]
