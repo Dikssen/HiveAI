@@ -2,6 +2,7 @@ from app.agents.base import BaseITAgent
 from app.tools.support_analytics import SupportAnalyticsTool
 from app.tools.report_writer import ReportWriterTool
 from app.tools.confluence import get_confluence_tools
+from app.tools.jira import get_jira_tools
 
 
 class BusinessAnalystAgent(BaseITAgent):
@@ -33,4 +34,4 @@ class BusinessAnalystAgent(BaseITAgent):
     ]
 
     def get_tools(self):
-        return [SupportAnalyticsTool(), ReportWriterTool(), *get_confluence_tools()]
+        return [SupportAnalyticsTool(), ReportWriterTool(), *get_confluence_tools(), *get_jira_tools()]

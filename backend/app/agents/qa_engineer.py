@@ -6,6 +6,7 @@ from app.tools.local_repo import (
     ListLocalFilesTool, ReadLocalFileTool,
 )
 from app.tools.code_edit import CodeReadRangeTool, CodeReadSymbolTool
+from app.tools.jira import get_jira_tools
 
 
 class QAEngineerAgent(BaseITAgent):
@@ -46,4 +47,5 @@ class QAEngineerAgent(BaseITAgent):
             CloneOrUpdateRepoTool(), ListBranchesTool(), SwitchBranchTool(),
             ListLocalFilesTool(), ReadLocalFileTool(),
             CodeReadRangeTool(), CodeReadSymbolTool(),
+            *get_jira_tools(),
         ]

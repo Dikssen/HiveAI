@@ -2,6 +2,7 @@ from app.agents.base import BaseITAgent
 from app.tools.support_analytics import SupportAnalyticsTool
 from app.tools.read_logs import ReadLogsTool
 from app.tools.report_writer import ReportWriterTool
+from app.tools.jira import get_jira_tools
 
 
 class SupportEngineerAgent(BaseITAgent):
@@ -31,4 +32,4 @@ class SupportEngineerAgent(BaseITAgent):
     ]
 
     def get_tools(self):
-        return [SupportAnalyticsTool(), ReadLogsTool(), ReportWriterTool()]
+        return [SupportAnalyticsTool(), ReadLogsTool(), ReportWriterTool(), *get_jira_tools()]
