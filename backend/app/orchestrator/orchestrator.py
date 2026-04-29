@@ -28,6 +28,12 @@ from app.models.worker_log import WorkerLog
 
 logger = structlog.get_logger()
 
+
+def _decode_unicode_escapes(text: str) -> str:
+    """Some LLMs return \\uXXXX escape sequences as literal text instead of real chars."""
+    return re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), text)
+
+
 # -------------------------------------------------------------------
 # Orchestrator system prompt — tells the LLM how to select agents
 # -------------------------------------------------------------------
@@ -419,6 +425,7 @@ class Orchestrator:
 
             # Final answer is the last crew task's output
             final_answer = str(crew_result) if crew_result else "Task completed."
+            final_answer = _decode_unicode_escapes(final_answer)
 
             # Persist as assistant message
             self.db.add(
