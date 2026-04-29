@@ -2,8 +2,8 @@
 
 An AI-powered operations platform for IT companies. Business users describe tasks in natural language — a multi-agent system handles the execution across your internal tools and systems.
 
-**Current integrations:** Confluence  
-**Planned:** OpenStack · Fleio · Jira · Analytics
+**Current integrations:** Confluence · Jira · GitHub  
+**Planned:** OpenStack · Fleio · Analytics
 
 ---
 
@@ -12,11 +12,11 @@ An AI-powered operations platform for IT companies. Business users describe task
 ```
 User writes a task in chat
         ↓
-ChiefOrchestrator (LangGraph) analyzes and builds an execution plan
+ChiefOrchestrator analyzes and builds an execution plan
         ↓
-Specialized agents run in parallel or sequentially via Celery workers
+Specialized agents run sequentially via Celery workers
         ↓
-Each agent uses tools to interact with real systems (Confluence, etc.)
+Each agent uses tools to interact with real systems (Confluence, Jira, GitHub, etc.)
         ↓
 Results are synthesized and returned to the user
 ```
@@ -42,16 +42,16 @@ FastAPI (backend :8000)
 Celery Task  ──────────────────────────────────────
   │                                               │
   ▼                                               ▼
-LangGraph Orchestrator                      PostgreSQL
+ChiefOrchestrator                           PostgreSQL
   │  plan → run → evaluate → synthesize     (results, logs,
   │                                          agent run history)
-  ├── ProjectManagerAgent
-  ├── BackendDeveloperAgent  ──► Confluence tools
-  ├── DevOpsAgent
+  ├── ProjectManagerAgent     ──► Confluence · Jira
+  ├── BackendDeveloperAgent   ──► Confluence · Jira · GitHub
+  ├── QAEngineerAgent         ──► Jira · GitHub
+  ├── BusinessAnalystAgent    ──► Confluence · Jira
+  ├── SupportEngineerAgent    ──► Jira
   ├── DataAnalystAgent
-  ├── SupportEngineerAgent
-  ├── QAEngineerAgent
-  └── BusinessAnalystAgent
+  └── DevOpsAgent
 
 Redis ← Celery broker
 ```
@@ -95,17 +95,8 @@ LLM_MODEL=qwen2.5:14b
 LLM_BASE_URL=http://host.docker.internal:11434
 LLM_SUPPORTS_TOOLS=true
 
-ORCHESTRATOR_RUNNER=langgraph
+ORCHESTRATOR_RUNNER=custom
 MAX_ORCHESTRATOR_ITERATIONS=5
-```
-
-**Confluence integration (optional):**
-```env
-CONFLUENCE_URL=https://your-company.atlassian.net
-CONFLUENCE_USER=your@email.com
-CONFLUENCE_API_TOKEN=your_token
-CONFLUENCE_SPACE_KEY=DEV
-CONFLUENCE_WRITE_ENABLED=true
 ```
 
 ### 3. Start
@@ -126,18 +117,80 @@ First run takes 5–10 minutes (image downloads + frontend build).
 
 ---
 
+## Configuring integrations
+
+Confluence, Jira, and GitHub credentials are stored in the database — no restart needed after changes.
+
+**Configure via API:**
+```bash
+curl -X PATCH http://localhost:8000/api/integrations/CONFLUENCE_URL \
+  -H "Content-Type: application/json" \
+  -d '{"value": "https://mycompany.atlassian.net/wiki"}'
+```
+
+Or use the Swagger UI at `http://localhost:8000/docs` → `PATCH /api/integrations/{key}`.
+
+### Confluence
+
+| Key | Description |
+|-----|-------------|
+| `CONFLUENCE_URL` | Base URL, e.g. `https://mycompany.atlassian.net/wiki` |
+| `CONFLUENCE_USER` | Login email |
+| `CONFLUENCE_API_TOKEN` | API token (masked in API responses) |
+| `CONFLUENCE_SPACE_KEY` | Default space key, e.g. `DEV` |
+| `CONFLUENCE_WRITE_ENABLED` | `true` to allow creating/editing pages |
+
+### Jira
+
+| Key | Description |
+|-----|-------------|
+| `JIRA_URL` | Base URL, e.g. `https://mycompany.atlassian.net` (no `/wiki`) |
+| `JIRA_USER` | Login email (same as Confluence) |
+| `JIRA_API_TOKEN` | API token (same as Confluence) |
+| `JIRA_PROJECT_KEY` | Default project key, e.g. `DEV` |
+| `JIRA_WRITE_ENABLED` | `true` to allow creating/updating issues |
+
+### GitHub
+
+| Key | Description |
+|-----|-------------|
+| `GITHUB_TOKEN` | Personal access token (masked in API responses) |
+
+---
+
+## Agent & tool management
+
+Enable or disable individual agents and their tools via API — no restart needed.
+
+```bash
+# Disable an agent
+curl -X PATCH http://localhost:8000/api/agents/BackendDeveloperAgent \
+  -H "Content-Type: application/json" -d '{"is_enabled": false}'
+
+# Disable a specific tool for an agent
+curl -X PATCH http://localhost:8000/api/agents/ProjectManagerAgent/tools/JiraCreateIssueTool \
+  -H "Content-Type: application/json" -d '{"is_enabled": false}'
+
+# List all agents and their tools
+curl http://localhost:8000/api/agents | jq .
+```
+
+---
+
 ## Usage examples
 
 ```
 Write technical documentation for the auth module and publish it to Confluence
 
+Create a Jira task for implementing dark mode with High priority
+
 Analyze support ticket trends from last month
 
 Review the deployment configuration and suggest improvements
 
-Create a project plan for implementing dark mode
-
 Investigate the 503 errors in service logs and summarize the root cause
+
+List all open In Progress tickets in the DEV project
 ```
 
 ---
@@ -202,7 +255,7 @@ AGENT_REGISTRY = {
 }
 ```
 
-Restart `backend` + `worker` — the orchestrator discovers agents from the registry automatically.
+Restart `backend` + `worker` — the orchestrator discovers agents from the registry automatically. The agent and its tools are seeded into the database on next startup.
 
 ---
 
@@ -224,7 +277,7 @@ class MyTool(LoggedTool):
         return f"result for: {query}"
 ```
 
-Add it to the relevant agent's `get_tools()` method.
+Add it to the relevant agent's `get_tools()` method. See `backend/app/tools/TOOLS.md` for full tools reference.
 
 ---
 
@@ -238,7 +291,7 @@ it-company/
 │   ├── app/
 │   │   ├── agents/
 │   │   │   ├── agent_registry.py     # Register agents here
-│   │   │   ├── base.py               # BaseITAgent
+│   │   │   ├── base.py               # BaseITAgent + get_active_tools()
 │   │   │   ├── backend_developer.py
 │   │   │   ├── business_analyst.py
 │   │   │   ├── data_analyst.py
@@ -250,24 +303,33 @@ it-company/
 │   │   │       ├── langgraph_runner.py  # ReAct agent runner (default)
 │   │   │       └── crewai_runner.py     # CrewAI runner (alternative)
 │   │   ├── orchestrator/
-│   │   │   ├── graph.py              # LangGraph orchestration graph
-│   │   │   ├── orchestrator.py       # Core logic (planning, evaluation, synthesis)
-│   │   │   └── base.py
+│   │   │   └── orchestrator.py       # Planning, evaluation, synthesis
 │   │   ├── tools/
 │   │   │   ├── base.py               # LoggedTool base class
-│   │   │   └── confluence.py         # Confluence read/write/navigate tools
+│   │   │   ├── confluence.py         # Confluence read/write tools
+│   │   │   ├── jira.py               # Jira read/write tools
+│   │   │   ├── git_serch.py          # GitHub repository listing
+│   │   │   ├── local_repo.py         # Clone, read, edit local repos
+│   │   │   └── TOOLS.md              # Full tools reference
 │   │   ├── models/                   # SQLAlchemy models
-│   │   ├── api/                      # FastAPI routes
-│   │   ├── core/
-│   │   │   ├── llm.py                # LLM factory (Ollama / OpenAI-compatible)
-│   │   │   └── celery_app.py
-│   │   └── workers/tasks.py          # Celery task entry point
+│   │   │   ├── agent.py              # Agent enable/disable
+│   │   │   ├── agent_tool_config.py  # Per-agent tool enable/disable
+│   │   │   └── integration_config.py # Confluence/Jira/GitHub credentials
+│   │   ├── api/
+│   │   │   ├── agent_config.py       # GET/PATCH /api/agents
+│   │   │   └── integrations.py       # GET/PATCH /api/integrations
+│   │   ├── db/
+│   │   │   ├── seed.py               # Upsert agents, tools, integration configs on startup
+│   │   │   └── integration_config_helper.py  # DB reads with 60s TTL cache
+│   │   └── core/
+│   │       ├── llm.py                # LLM factory (Ollama / OpenAI-compatible)
+│   │       └── celery_app.py
 │   └── alembic/                      # DB migrations
 └── frontend/
     └── src/
         ├── App.jsx
         └── components/
-            ├── MessageList.jsx       # Markdown rendering (tables, code, etc.)
+            ├── MessageList.jsx
             ├── ChatInput.jsx
             └── Sidebar.jsx
 ```
@@ -284,16 +346,11 @@ chats
               ├── input_payload (full task + prior context)
               ├── output_payload
               └── worker_logs
-```
 
-Query all activity for a chat:
-```sql
-SELECT ar.agent_name, ar.status, ar.created_at,
-       ar.input_payload->>'task' AS task,
-       ar.output_payload->>'result' AS result
-FROM agent_runs ar
-WHERE ar.chat_id = <chat_id>
-ORDER BY ar.created_at;
+agents
+  └── agent_tool_configs (per-agent tool enable/disable)
+
+integration_configs (Confluence, Jira, GitHub credentials)
 ```
 
 ---
@@ -310,6 +367,12 @@ docker compose exec backend alembic upgrade head
 # Check LLM health
 curl http://localhost:8000/api/health/llm | jq .
 
+# List all agents with their tools
+curl http://localhost:8000/api/agents | jq .
+
+# List all integration configs
+curl http://localhost:8000/api/integrations | jq .
+
 # View agent runs via API
 curl http://localhost:8000/api/chats/1/agent-runs | jq .
 
@@ -321,12 +384,15 @@ docker compose up -d --build worker
 
 ## Roadmap
 
-- [x] Multi-agent orchestration with LangGraph
+- [x] Multi-agent orchestration
 - [x] Confluence integration (read, write, navigate, move pages)
-- [x] Full agent run history in DB with context
+- [x] Jira integration (search, read, create, comment, transition issues)
+- [x] GitHub integration (list repos, clone, read, edit files)
+- [x] DB-driven agent & tool enable/disable (no restart needed)
+- [x] DB-driven integration credentials (no restart needed)
+- [x] Full agent run history with context
 - [ ] OpenStack integration
 - [ ] Fleio ticket system integration
-- [ ] Jira integration
 - [ ] Analytics module
 - [ ] Streaming responses
 - [ ] Agent run UI timeline
