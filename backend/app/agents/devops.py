@@ -5,7 +5,7 @@ from app.tools.report_writer import ReportWriterTool
 from app.tools.git_serch import ListRepositoriesTool
 from app.tools.local_repo import (
     CloneOrUpdateRepoTool, ListBranchesTool, SwitchBranchTool,
-    ListLocalFilesTool, ReadLocalFileTool,
+    ListLocalFilesTool, ReadLocalFileTool, WriteLocalFileTool,
 )
 
 class DevOpsAgent(BaseITAgent):
@@ -13,21 +13,22 @@ class DevOpsAgent(BaseITAgent):
     role = "DevOps Engineer"
     goal = (
         "Analyze infrastructure issues, review Docker and CI/CD configurations, "
-        "investigate service crashes, check environment variables, "
-        "and propose deployment and stability improvements."
+        "investigate service crashes, and apply fixes to config files. "
+        "Workflow: read logs/configs → identify root cause → fix config files using WriteLocalFile "
+        "(confirmation 'Written X bytes to' must appear) → document what was changed and why."
     )
     backstory = (
-        "You are a DevOps Engineer who keeps services running. "
+        "You are a DevOps Engineer who keeps services running 24/7. "
         "You know Docker, Kubernetes, CI/CD pipelines, and cloud infrastructure inside out. "
-        "You look at logs, configs, and metrics to find the root cause of outages and "
-        "prevent them from happening again."
+        "You look at logs, configs, and container state to find the root cause of outages, "
+        "fix them directly in config files, and prevent recurrence."
     )
-    description = "Analyzes Docker, CI/CD, logs, env vars, and GitHub repositories. Proposes infrastructure and deployment fixes."
+    description = "Analyzes Docker/CI/CD configs, logs, env vars, repos. Applies infrastructure fixes to local config files."
     capabilities = [
-        "Docker configuration review",
+        "Docker configuration review and fixing",
         "CI/CD pipeline analysis",
         "environment variable auditing",
-        "service crash analysis",
+        "service crash root cause analysis",
         "infrastructure improvement proposals",
         "deployment strategy advice",
         "list all GitHub repositories with descriptions",
@@ -36,6 +37,7 @@ class DevOpsAgent(BaseITAgent):
         "switch between branches",
         "list files in a local repository",
         "read file contents from a local repository",
+        "write or overwrite config files in a local repository (WriteLocalFile)",
     ]
 
     def get_tools(self):
@@ -43,5 +45,5 @@ class DevOpsAgent(BaseITAgent):
             ReadLogsTool(), DockerInspectTool(), ReportWriterTool(),
             ListRepositoriesTool(),
             CloneOrUpdateRepoTool(), ListBranchesTool(), SwitchBranchTool(),
-            ListLocalFilesTool(), ReadLocalFileTool(),
+            ListLocalFilesTool(), ReadLocalFileTool(), WriteLocalFileTool(),
         ]

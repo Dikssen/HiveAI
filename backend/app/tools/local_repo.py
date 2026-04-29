@@ -180,3 +180,37 @@ class ReadLocalFileTool(LoggedTool):
             return f"File is too large ({size} bytes). Read specific sections instead."
 
         return path.read_text(errors="replace")
+
+
+# ---------------------------------------------------------------------------
+
+class WriteLocalFileInput(BaseModel):
+    repo_name: str = Field(description="Repository name, e.g. 'check_server'")
+    file_path: str = Field(description="File path relative to repo root, e.g. 'src/main.py'")
+    content: str = Field(description="Full new content of the file")
+
+
+class WriteLocalFileTool(LoggedTool):
+    name: str = "WriteLocalFile"
+    description: str = (
+        "Write (create or overwrite) a file in a locally cloned repository. "
+        "Always read the file first with ReadLocalFile before overwriting it. "
+        "Use this to apply code fixes or improvements. "
+        "Changes are local only — not pushed to GitHub."
+    )
+    args_schema: type[BaseModel] = WriteLocalFileInput
+
+    def _run(self, repo_name: str, file_path: str, content: str) -> str:
+        repo_root = _repo_path(repo_name)
+        if not repo_root.exists():
+            return f"Repository '{repo_name}' is not cloned yet. Use CloneOrUpdateRepo first."
+
+        # Prevent path traversal outside the repo
+        target = (repo_root / file_path).resolve()
+        if not str(target).startswith(str(repo_root.resolve())):
+            return f"Error: path '{file_path}' is outside the repository root — not allowed."
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        size = len(content.encode("utf-8"))
+        return f"Written {size} bytes to '{file_path}' in '{repo_name}'"

@@ -5,12 +5,13 @@ import MessageInput from "./MessageInput";
 import AgentRunTimeline from "./AgentRunTimeline";
 import StatusBadge from "./StatusBadge";
 
-export default function ChatWindow({ chatId }) {
+export default function ChatWindow({ chatId, onViewRun }) {
   const [messages, setMessages] = useState([]);
   const [pendingTaskId, setPendingTaskId] = useState(null);
   const [taskStatus, setTaskStatus] = useState(null);
   const [timelineKey, setTimelineKey] = useState(0);
   const [showTimeline, setShowTimeline] = useState(true);
+  const [agentRuns, setAgentRuns] = useState([]);
   const [error, setError] = useState(null);
   const pollRef = useRef(null);
 
@@ -29,7 +30,11 @@ export default function ChatWindow({ chatId }) {
     setPendingTaskId(null);
     setTaskStatus(null);
     setError(null);
-    if (chatId) loadMessages();
+    setAgentRuns([]);
+    if (chatId) {
+      loadMessages();
+      api.getAgentRuns(chatId).then(setAgentRuns).catch(() => {});
+    }
   }, [chatId]);
 
   useEffect(() => {
@@ -47,6 +52,9 @@ export default function ChatWindow({ chatId }) {
           setPendingTaskId(null);
           await loadMessages();
           setTimelineKey((k) => k + 1);
+          // refresh agent runs to update "last run" button
+          const runs = await api.getAgentRuns(chatId).catch(() => []);
+          setAgentRuns(runs);
         }
       } catch {
         // backend restarting — keep polling
@@ -126,10 +134,33 @@ export default function ChatWindow({ chatId }) {
           Chat #{chatId}
         </span>
         {taskStatus && <StatusBadge status={taskStatus} />}
+
+        {/* Last run button — visible as soon as there are runs */}
+        {(() => {
+          const lastOrch = [...agentRuns].reverse().find(r => r.agent_name === "ChiefOrchestratorAgent");
+          return lastOrch ? (
+            <button
+              onClick={() => onViewRun(lastOrch.id)}
+              style={{
+                marginLeft: "auto",
+                padding: "4px 14px",
+                fontSize: 12,
+                background: "#6366f1",
+                border: "none",
+                borderRadius: 6,
+                cursor: "pointer",
+                color: "#fff",
+                fontWeight: 600,
+              }}
+            >
+              🔍 View agent flow
+            </button>
+          ) : <span style={{ marginLeft: "auto" }} />;
+        })()}
+
         <button
           onClick={() => setShowTimeline((v) => !v)}
           style={{
-            marginLeft: "auto",
             padding: "4px 12px",
             fontSize: 12,
             background: showTimeline ? "#eff6ff" : "#f9fafb",
@@ -139,7 +170,7 @@ export default function ChatWindow({ chatId }) {
             color: "#374151",
           }}
         >
-          {showTimeline ? "▼ Hide" : "▲ Show"} Agent Timeline
+          {showTimeline ? "▼ Hide" : "▲ Show"} Timeline
         </button>
       </div>
 
@@ -164,7 +195,7 @@ export default function ChatWindow({ chatId }) {
       {/* Agent timeline — фіксована знизу, власний скрол якщо потрібно */}
       {showTimeline && (
         <div style={{ flexShrink: 0, maxHeight: "35vh", overflowY: "auto" }}>
-          <AgentRunTimeline chatId={chatId} refreshKey={timelineKey} />
+          <AgentRunTimeline chatId={chatId} refreshKey={timelineKey} onViewRun={onViewRun} />
         </div>
       )}
 

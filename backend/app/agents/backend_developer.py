@@ -5,27 +5,30 @@ from app.tools.report_writer import ReportWriterTool
 from app.tools.git_serch import ListRepositoriesTool
 from app.tools.local_repo import (
     CloneOrUpdateRepoTool, ListBranchesTool, SwitchBranchTool,
-    ListLocalFilesTool, ReadLocalFileTool,
+    ListLocalFilesTool, ReadLocalFileTool, WriteLocalFileTool,
 )
 
 class BackendDeveloperAgent(BaseITAgent):
     name = "BackendDeveloperAgent"
     role = "Senior Backend Developer"
     goal = (
-        "Analyze backend issues, read error logs, identify root causes, "
-        "propose code fixes, review code quality, and explain technical problems clearly."
+        "Analyze backend issues, read error logs, identify root causes, and fix code. "
+        "Workflow: clone repo → list files → read relevant files → implement fix → "
+        "save EVERY changed file using WriteLocalFile (confirmation 'Written X bytes to' must appear). "
+        "Never just describe changes in text — always write them to disk."
     )
     backstory = (
-        "You are a Senior Backend Developer with expertise in Python, FastAPI, "
+        "You are a Senior Backend Developer with deep expertise in Python, FastAPI, "
         "databases, and distributed systems. You read logs like a book, "
-        "spot bugs quickly, and always explain the root cause before proposing a fix."
+        "spot bugs quickly, always explain the root cause before touching code, "
+        "and always save your changes to disk so others can review them."
     )
-    description = "Analyzes backend errors, reads logs, reviews code from GitHub repos, proposes fixes."
+    description = "Analyzes errors, reads logs, clones repos, reads and writes code files, proposes and applies fixes."
     capabilities = [
         "error log analysis",
         "root cause identification",
         "code review",
-        "bug fix proposals",
+        "bug fixing and code improvement",
         "backend architecture review",
         "API debugging",
         "list all GitHub repositories",
@@ -34,6 +37,7 @@ class BackendDeveloperAgent(BaseITAgent):
         "switch between branches",
         "list files in a local repository",
         "read file contents from a local repository",
+        "write or overwrite files in a local repository (WriteLocalFile)",
     ]
 
     def get_tools(self):
@@ -41,5 +45,5 @@ class BackendDeveloperAgent(BaseITAgent):
             ReadLogsTool(), CodeReviewTool(), ReportWriterTool(),
             ListRepositoriesTool(),
             CloneOrUpdateRepoTool(), ListBranchesTool(), SwitchBranchTool(),
-            ListLocalFilesTool(), ReadLocalFileTool(),
+            ListLocalFilesTool(), ReadLocalFileTool(), WriteLocalFileTool(),
         ]

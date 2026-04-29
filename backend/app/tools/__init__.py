@@ -10,6 +10,7 @@ from app.tools.local_repo import (
     SwitchBranchTool,
     ListLocalFilesTool,
     ReadLocalFileTool,
+    WriteLocalFileTool,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "SwitchBranchTool",
     "ListLocalFilesTool",
     "ReadLocalFileTool",
+    "WriteLocalFileTool",
 ]

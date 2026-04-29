@@ -2,11 +2,13 @@ import { useState, useEffect } from "react";
 import { api } from "./api/client";
 import ChatList from "./components/ChatList";
 import ChatWindow from "./components/ChatWindow";
+import RunDetailPage from "./components/RunDetailPage";
 
 export default function App() {
   const [chats, setChats] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
   const [llmStatus, setLlmStatus] = useState(null);
+  const [runView, setRunView] = useState(null); // { orchestratorRunId, chatId }
 
   const loadChats = async () => {
     try {
@@ -59,18 +61,18 @@ export default function App() {
         onDelete={handleDeleteChat}
       />
 
-      {/* Права панель — займає весь залишок висоти */}
+      {/* Права панель */}
       <div
         style={{
           flex: 1,
           display: "flex",
           flexDirection: "column",
           minWidth: 0,
-          minHeight: 0, // ← ключово для скролу в дочірньому flex-елементі
+          minHeight: 0,
           overflow: "hidden",
         }}
       >
-        {llmStatus && llmStatus.status !== "ok" && (
+        {llmStatus && llmStatus.status !== "ok" && !runView && (
           <div
             style={{
               background: "#fff7ed",
@@ -87,7 +89,21 @@ export default function App() {
             ⚠️ <strong>LLM Warning:</strong> {llmStatus.message}
           </div>
         )}
-        <ChatWindow chatId={activeChatId} />
+
+        {runView ? (
+          <RunDetailPage
+            orchestratorRunId={runView.orchestratorRunId}
+            chatId={runView.chatId}
+            onBack={() => setRunView(null)}
+          />
+        ) : (
+          <ChatWindow
+            chatId={activeChatId}
+            onViewRun={(orchestratorRunId) =>
+              setRunView({ orchestratorRunId, chatId: activeChatId })
+            }
+          />
+        )}
       </div>
     </div>
   );

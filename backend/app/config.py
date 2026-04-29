@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     GITHUB_TOKEN: Optional[str] = None
 
+    MAX_ORCHESTRATOR_ITERATIONS: int = 10
+
     class Config:
         env_file = ".env"
         extra = "ignore"

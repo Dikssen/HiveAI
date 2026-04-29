@@ -3,16 +3,18 @@ ChiefOrchestrator — the decision-making brain of the IT company.
 
 Flow:
   1. Receives user message and chat context
-  2. Calls LLM (JSON mode) to decide which agents to use and what tasks to give them
-  3. Creates AgentRun DB records for each selected agent
-  4. Builds a CrewAI Crew with selected agents and their tasks
-  5. Runs the Crew (sequential process)
-  6. Saves results to DB and creates the assistant reply message
+  2. LLM plans which agents to use and in what order (chain-of-thought)
+  3. Unified agentic loop:
+       a. Run the current agent, passing accumulated context from prior agents
+       b. LLM evaluates: is the result complete?
+       c. If not → LLM picks the next agent and task; loop continues
+       d. Repeat up to MAX_ORCHESTRATOR_ITERATIONS (from config)
+  4. LLM synthesizes a final answer in the user's language
+  5. Saves result to DB
 """
 import json
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Optional
 
 import structlog
@@ -29,10 +31,6 @@ from app.models.worker_log import WorkerLog
 
 logger = structlog.get_logger()
 
-REVIEW_LOOP_AGENTS = {"BackendDeveloperAgent", "QAEngineerAgent"}
-MAX_REVIEW_ITERATIONS = 3
-REPORTS_ROOT = Path("/app/repos/reports")
-
 
 def _detect_language(text: str) -> str:
     cyrillic = len(re.findall(r'[а-яА-ЯёЁіІїЇєЄґҐ]', text))
@@ -43,28 +41,30 @@ def _detect_language(text: str) -> str:
     return "English"
 
 
-# -------------------------------------------------------------------
-# Orchestrator system prompt — tells the LLM how to select agents
-# -------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------------------------
+
 ORCHESTRATOR_SYSTEM_PROMPT = """You are ChiefOrchestratorAgent — the lead AI orchestrator of an IT company.
 
 You manage a team of specialized agents:{agent_descriptions}
 
-Your job:
-1. Analyze the user request (and chat history if provided)
-2. Select the most appropriate agents for this request
-3. Define a specific, actionable task for each selected agent
-4. Return ONLY valid JSON — no markdown fences, no extra text
+Before selecting agents, think step by step (put this in "reasoning"):
+  1. What exactly does the user need? Break it into concrete sub-tasks.
+  2. Which agent is best suited for each sub-task?
+  3. In what order should they work? (who depends on whom?)
+  4. What is the minimal set — avoid calling agents that add no value.
 
-Required JSON format:
+Return ONLY valid JSON — no markdown fences, no extra text:
+
 {{
-  "reasoning": "Explain WHY you selected these agents and how they will collaborate to answer the request",
+  "reasoning": "Step-by-step analysis: what is needed, who does what, and why in this order",
   "selected_agents": ["AgentName1", "AgentName2"],
   "tasks": [
     {{
       "agent": "AgentName1",
-      "description": "Precise task description for this agent — what exactly should it do",
-      "expected_output": "What this agent must produce (e.g., 'A markdown table of ticket counts by category')"
+      "description": "Precise task description — what exactly should this agent do",
+      "expected_output": "Concrete description of what this agent must produce"
     }},
     {{
       "agent": "AgentName2",
@@ -75,16 +75,89 @@ Required JSON format:
 }}
 
 Rules:
-- Only include agents that are genuinely needed for this request
-- Tasks should be ordered logically — later agents can build on earlier results
-- Be specific: vague tasks produce poor outputs
-- Use at most 3-4 agents unless the request truly requires more
-- If the request is simple, one agent is fine
 - Agent names MUST match exactly from the list above
-- All task descriptions for agents MUST be written in English
+- All task descriptions MUST be in English
+- Use at most 3-4 agents unless the request truly requires more
+- One agent is fine for simple requests
 - The final answer to the user must be in: {user_language}
+- File modification rule: if the task requires creating or modifying files in a repository,
+  the task description MUST end with this exact sentence:
+  "After writing the code, call WriteLocalFile to save every changed file to disk.
+   The confirmation 'Written X bytes to' MUST appear in your output — otherwise the task is not done."
 """
 
+EVALUATION_SYSTEM_PROMPT = """You are ChiefOrchestratorAgent reviewing the work done so far.
+
+Available agents:{agent_descriptions}
+
+You receive the original user request and the log of all agent work done so far.
+Decide whether the user's request is fully and correctly addressed.
+
+Common patterns to watch for:
+- If BackendDeveloperAgent wrote code → QAEngineerAgent should review it (if not done yet)
+- If QAEngineerAgent found bugs → BackendDeveloperAgent should fix them (if not done yet)
+- If the last agent already fixed all issues and QA approved → mark complete
+- If the same agent tried the same thing twice without improvement → mark complete (avoid infinite loops)
+
+AGENT FAILURE DETECTION — check for this first:
+- If the output starts with "[AGENT_FAILED:" the agent returned a raw JSON tool call without executing it.
+- Always mark as NOT complete. Set next_agent to the same agent and instruct it:
+  "The previous iteration failed to execute tools. Do NOT output JSON action blobs — actually run the tools and return their results."
+
+FILE WRITE VERIFICATION — apply this check whenever the request involves modifying or creating files:
+- Look for ANY of these patterns in the agent output (they all mean WriteLocalFile was called):
+    • "Written N bytes to"  (exact tool return string)
+    • "written … bytes"     (paraphrase with a number and "bytes")
+    • "written to … repository"
+    • "saved … to disk"
+    • "file written"
+- If NONE of those patterns appear and the task required file changes, the files were NOT saved to disk.
+- In that case mark as NOT complete, set next_agent to the same agent, and instruct it:
+  "The previous iteration produced code but did NOT call WriteLocalFile.
+   Read the code from the previous context and call WriteLocalFile now to save each file."
+- If ANY of those patterns appear, treat file writing as confirmed — do NOT request another write.
+
+Return ONLY valid JSON — no markdown fences, no extra text:
+
+If complete:
+{{
+  "is_complete": true,
+  "reason": "Concise explanation of why the work is done"
+}}
+
+If more work is needed:
+{{
+  "is_complete": false,
+  "reason": "What is missing or wrong",
+  "next_agent": "ExactAgentName",
+  "next_task": {{
+    "description": "Precise task in English — reference the prior work explicitly",
+    "expected_output": "What the agent must produce"
+  }}
+}}
+
+Rules:
+- Only mark complete if the output genuinely answers the user's request
+- Agent name MUST match exactly from the available list
+- Be decisive — do not suggest the same agent twice in a row unless there is a clear new instruction
+"""
+
+SYNTHESIS_SYSTEM_PROMPT = """You are ChiefOrchestratorAgent. Your team has finished working on a user request.
+Synthesize all agent outputs into a single clear answer for the user.
+
+Rules:
+- Write in {user_language}
+- Distill the key findings, decisions, and results — do not repeat agents verbatim
+- Include code if it was produced
+- If there were multiple iterations (e.g. Backend + QA reviews), summarize the final approved state
+- Mention any remaining limitations briefly
+- Be concise but complete
+"""
+
+
+# ---------------------------------------------------------------------------
+# Result container
+# ---------------------------------------------------------------------------
 
 class OrchestratorResult:
     def __init__(
@@ -114,16 +187,26 @@ class OrchestratorResult:
         }
 
 
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
 class Orchestrator:
     def __init__(self, db: Session):
         self.db = db
-        self._langchain_llm = None
-        self._crewai_llm = None
+        self._langchain_llm_json: Any = None
+        self._langchain_llm_text: Any = None
+        self._crewai_llm: Any = None
 
-    def _langchain(self):
-        if not self._langchain_llm:
-            self._langchain_llm = get_langchain_llm(json_mode=True)
-        return self._langchain_llm
+    def _langchain_json(self):
+        if not self._langchain_llm_json:
+            self._langchain_llm_json = get_langchain_llm(json_mode=True)
+        return self._langchain_llm_json
+
+    def _langchain_text(self):
+        if not self._langchain_llm_text:
+            self._langchain_llm_text = get_langchain_llm(json_mode=False)
+        return self._langchain_llm_text
 
     def _crewai(self):
         if not self._crewai_llm:
@@ -131,36 +214,22 @@ class Orchestrator:
         return self._crewai_llm
 
     # ------------------------------------------------------------------
-    # Database helpers
+    # DB helpers
     # ------------------------------------------------------------------
 
-    def _log(
-        self,
-        agent_run_id: Optional[int],
-        level: str,
-        message: str,
-        metadata: Optional[dict] = None,
-    ) -> None:
-        """Persist a log entry; also emit to structlog."""
+    def _log(self, run_id: Optional[int], level: str, message: str, meta: Optional[dict] = None) -> None:
         entry = WorkerLog(
-            agent_run_id=agent_run_id,
+            agent_run_id=run_id,
             worker_name="ChiefOrchestrator",
             level=level,
             message=message,
-            metadata_=metadata or {},
+            metadata_=meta or {},
         )
         self.db.add(entry)
         self.db.commit()
-        log_fn = getattr(logger, level.lower(), logger.info)
-        log_fn(message, **(metadata or {}))
+        getattr(logger, level.lower(), logger.info)(message, **(meta or {}))
 
-    def _create_agent_run(
-        self,
-        chat_id: int,
-        agent_name: str,
-        task_description: str,
-        input_payload: dict,
-    ) -> AgentRun:
+    def _create_agent_run(self, chat_id: int, agent_name: str, task_description: str, input_payload: dict) -> AgentRun:
         ar = AgentRun(
             chat_id=chat_id,
             agent_name=agent_name,
@@ -173,13 +242,7 @@ class Orchestrator:
         self.db.refresh(ar)
         return ar
 
-    def _update_agent_run(
-        self,
-        ar: AgentRun,
-        status: str,
-        output: Optional[dict] = None,
-        error: Optional[str] = None,
-    ) -> None:
+    def _update_agent_run(self, ar: AgentRun, status: str, output: Optional[dict] = None, error: Optional[str] = None) -> None:
         ar.status = status
         if status == "running":
             ar.started_at = datetime.now(timezone.utc)
@@ -202,91 +265,126 @@ class Orchestrator:
             .order_by(Message.created_at)
             .all()
         )
-        # Keep last 10 messages for context window efficiency
         recent = messages[-10:] if len(messages) > 10 else messages
         return "\n".join(f"{m.role.upper()}: {m.content}" for m in recent)
 
     # ------------------------------------------------------------------
-    # LLM decision: which agents to call
+    # JSON parsing
     # ------------------------------------------------------------------
 
     def _parse_json(self, raw: str) -> dict:
-        """Robustly extract JSON from LLM output."""
         raw = raw.strip()
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
             pass
-        # Strip markdown fences if present
-        raw_clean = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
+        cleaned = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
         try:
-            return json.loads(raw_clean)
+            return json.loads(cleaned)
         except json.JSONDecodeError:
             pass
-        # Extract first {...} block
-        m = re.search(r"\{.*\}", raw_clean, re.DOTALL)
+        m = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if m:
             return json.loads(m.group())
         raise ValueError(f"Cannot parse JSON from LLM response: {raw[:300]}")
 
-    def _make_decision(
-        self,
-        user_message: str,
-        chat_history: str,
-        orchestrator_run_id: int,
-        user_language: str = "English",
-    ) -> dict:
-        agent_descriptions = get_agent_descriptions()
-        system_prompt = ORCHESTRATOR_SYSTEM_PROMPT.format(
-            agent_descriptions=agent_descriptions,
+    # ------------------------------------------------------------------
+    # LLM: initial planning
+    # ------------------------------------------------------------------
+
+    def _make_decision(self, user_message: str, chat_history: str, run_id: int, user_language: str) -> dict:
+        system = ORCHESTRATOR_SYSTEM_PROMPT.format(
+            agent_descriptions=get_agent_descriptions(),
             user_language=user_language,
         )
         context = (
             f"Chat history:\n{chat_history}\n\nCurrent request: {user_message}"
-            if chat_history
-            else user_message
+            if chat_history else user_message
         )
-
-        self._log(
-            orchestrator_run_id,
-            "INFO",
-            "Sending request to LLM for agent selection decision",
-            {
-                "user_message": user_message[:300],
-                "available_agents": list(AGENT_REGISTRY.keys()),
-            },
-        )
-
-        llm = self._langchain()
-        response = llm.invoke(
-            [SystemMessage(content=system_prompt), HumanMessage(content=context)]
-        )
+        self._log(run_id, "INFO", "Planning: selecting agents", {
+            "user_message": user_message[:300],
+            "available_agents": list(AGENT_REGISTRY.keys()),
+        })
+        response = self._langchain_json().invoke([SystemMessage(content=system), HumanMessage(content=context)])
         raw = response.content if hasattr(response, "content") else str(response)
-
-        self._log(
-            orchestrator_run_id,
-            "DEBUG",
-            "LLM decision received",
-            {"raw_response_preview": raw[:500]},
-        )
-
         decision = self._parse_json(raw)
-
-        self._log(
-            orchestrator_run_id,
-            "INFO",
-            "Orchestrator decision parsed successfully",
-            {
-                "selected_agents": decision.get("selected_agents", []),
-                "reasoning": decision.get("reasoning", "")[:300],
-                "num_tasks": len(decision.get("tasks", [])),
-            },
-        )
+        self._log(run_id, "INFO", "Plan ready", {
+            "selected_agents": decision.get("selected_agents", []),
+            "reasoning": decision.get("reasoning", "")[:300],
+        })
         return decision
 
     # ------------------------------------------------------------------
-    # Single-agent runner (helper for review loop)
+    # LLM: evaluate result after each agent
     # ------------------------------------------------------------------
+
+    def _evaluate_result(self, user_message: str, all_outputs: list[dict], run_id: int) -> dict:
+        system = EVALUATION_SYSTEM_PROMPT.format(agent_descriptions=get_agent_descriptions())
+        outputs_text = "\n\n".join(
+            f"--- Iteration {o['iteration']} | {o['agent']} ---\n{o['output'][:3000]}"
+            for o in all_outputs
+        )
+        context = f"User request:\n{user_message}\n\nWork done so far:\n{outputs_text}"
+        response = self._langchain_json().invoke([SystemMessage(content=system), HumanMessage(content=context)])
+        raw = response.content if hasattr(response, "content") else str(response)
+        evaluation = self._parse_json(raw)
+        self._log(run_id, "INFO", "Evaluation result", {
+            "is_complete": evaluation.get("is_complete"),
+            "reason": evaluation.get("reason", "")[:200],
+            "next_agent": evaluation.get("next_agent"),
+        })
+        return evaluation
+
+    # ------------------------------------------------------------------
+    # LLM: synthesize final user-facing answer
+    # ------------------------------------------------------------------
+
+    def _synthesize_answer(self, user_message: str, all_outputs: list[dict], user_language: str, run_id: int) -> str:
+        # Single agent, single iteration — return output directly to save an LLM call
+        if len(all_outputs) == 1 and user_language == "English":
+            self._log(run_id, "INFO", "Synthesis skipped — single agent output in English")
+            return all_outputs[0]["output"]
+
+        system = SYNTHESIS_SYSTEM_PROMPT.format(user_language=user_language)
+        outputs_text = "\n\n".join(
+            f"--- Iteration {o['iteration']} | {o['agent']} ---\n{o['output'][:3000]}"
+            for o in all_outputs
+        )
+        context = f"User request:\n{user_message}\n\nAgent outputs:\n{outputs_text}"
+        response = self._langchain_text().invoke([SystemMessage(content=system), HumanMessage(content=context)])
+        answer = response.content if hasattr(response, "content") else str(response)
+        self._log(run_id, "INFO", "Final answer synthesized", {"preview": answer[:200]})
+        return answer
+
+    # ------------------------------------------------------------------
+    # Agent runner — injects accumulated context from prior agents
+    # ------------------------------------------------------------------
+
+    def _build_prior_context(self, all_outputs: list[dict]) -> str:
+        if not all_outputs:
+            return ""
+        parts = []
+        for o in all_outputs:
+            parts.append(f"### Iteration {o['iteration']} — {o['agent']}\n{o['output'][:2000]}")
+        return "\n\n".join(parts)
+
+    def _is_unexecuted_action(self, output: str) -> bool:
+        """
+        Detect when the LLM returned a raw ReAct action blob instead of actual results.
+        DeepSeek sometimes outputs {"Thought": ..., "Action": ..., "Action Input": ...}
+        as its final answer without executing the tool.
+        """
+        text = output.strip().lstrip("`").strip()
+        if text.startswith("json"):
+            text = text[4:].strip()
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                keys = {k.lower() for k in parsed.keys()}
+                return bool(keys & {"action", "thought", "action_input"})
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return False
 
     def _run_single_agent(
         self,
@@ -295,153 +393,53 @@ class Orchestrator:
         expected_output: str,
         crewai_llm: Any,
         supports_tools: bool,
+        prior_context: str = "",
     ) -> str:
+        if prior_context:
+            full_description = (
+                f"## Context from previous work\n\n{prior_context}\n\n"
+                f"## Your task\n\n{task_description}"
+            )
+        else:
+            full_description = task_description
+
         agent_impl = AGENT_REGISTRY[agent_name]
         crewai_agent = agent_impl.get_crewai_agent(llm=crewai_llm, with_tools=supports_tools)
         crew_task = CrewTask(
-            description=task_description,
+            description=full_description,
             expected_output=expected_output,
             agent=crewai_agent,
         )
-        crew = Crew(
-            agents=[crewai_agent],
-            tasks=[crew_task],
-            process=Process.sequential,
-            verbose=True,
-        )
+        crew = Crew(agents=[crewai_agent], tasks=[crew_task], process=Process.sequential, verbose=True)
         result = crew.kickoff()
+
+        output = ""
         if hasattr(crew_task, "output") and crew_task.output is not None:
             out = crew_task.output
-            return out.raw if hasattr(out, "raw") else str(out)
-        return str(result) if result else ""
+            output = out.raw if hasattr(out, "raw") else str(out)
+        if not output:
+            output = str(result) if result else ""
+
+        if self._is_unexecuted_action(output):
+            logger.warning("Agent returned raw action JSON — tool was not executed", agent=agent_name, raw=output[:200])
+            output = (
+                f"[AGENT_FAILED: {agent_name} returned a raw tool-call JSON instead of executing the tool. "
+                f"The agent intended to call: {output[:300]}\n"
+                f"In the next iteration, explicitly execute the intended action and return the actual results.]"
+            )
+
+        return output
 
     # ------------------------------------------------------------------
-    # Review loop: Backend → QA → Backend... until QA approves
-    # ------------------------------------------------------------------
-
-    def _run_review_loop(
-        self,
-        chat_id: int,
-        backend_td: dict,
-        qa_td: dict,
-        crewai_llm: Any,
-        supports_tools: bool,
-        orchestrator_run_id: int,
-        agent_outputs: list,
-        tasks_created_log: list,
-        user_language: str = "English",
-    ) -> str:
-        report_dir = REPORTS_ROOT / f"chat_{chat_id}"
-        report_dir.mkdir(parents=True, exist_ok=True)
-
-        qa_feedback = ""
-        final_output = ""
-
-        for iteration in range(1, MAX_REVIEW_ITERATIONS + 1):
-            self._log(
-                orchestrator_run_id, "INFO",
-                f"Review loop iteration {iteration}/{MAX_REVIEW_ITERATIONS}",
-            )
-
-            # --- BackendDeveloperAgent ---
-            if qa_feedback:
-                backend_desc = (
-                    f"{backend_td['description']}\n\n"
-                    f"### QA Feedback from Iteration {iteration - 1}\n"
-                    f"{qa_feedback}\n\n"
-                    f"Address all QA findings above and improve the solution."
-                )
-            else:
-                backend_desc = backend_td["description"]
-
-            backend_ar = self._create_agent_run(
-                chat_id=chat_id,
-                agent_name="BackendDeveloperAgent",
-                task_description=f"[Iteration {iteration}] {backend_desc[:120]}",
-                input_payload={"iteration": iteration, "description": backend_desc},
-            )
-            self._update_agent_run(backend_ar, "running")
-
-            backend_output = self._run_single_agent(
-                "BackendDeveloperAgent",
-                backend_desc,
-                backend_td.get("expected_output", "Analysis and proposed code fixes"),
-                crewai_llm,
-                supports_tools,
-            )
-
-            report_path = report_dir / f"iteration_{iteration}_backend.md"
-            report_path.write_text(backend_output)
-
-            self._update_agent_run(
-                backend_ar, "completed",
-                output={"result": backend_output[:8000], "iteration": iteration, "report": str(report_path)},
-            )
-            agent_outputs.append({"agent": "BackendDeveloperAgent", "output": backend_output, "status": "completed", "iteration": iteration})
-            tasks_created_log.append({"agent": "BackendDeveloperAgent", "description": f"Iteration {iteration}", "status": "completed"})
-
-            # --- QAEngineerAgent ---
-            qa_desc = (
-                f"{qa_td['description']}\n\n"
-                f"### Backend Developer's Work — Iteration {iteration}\n"
-                f"{backend_output[:5000]}\n\n"
-                f"If the implementation is complete and correct, start your response with 'APPROVED: '.\n"
-                f"Otherwise list the specific issues that still need to be fixed.\n\n"
-                f"IMPORTANT: Write your final response in {user_language}."
-            )
-
-            qa_ar = self._create_agent_run(
-                chat_id=chat_id,
-                agent_name="QAEngineerAgent",
-                task_description=f"[Iteration {iteration}] Review Backend work",
-                input_payload={"iteration": iteration, "description": qa_desc},
-            )
-            self._update_agent_run(qa_ar, "running")
-
-            qa_output = self._run_single_agent(
-                "QAEngineerAgent",
-                qa_desc,
-                qa_td.get("expected_output", "QA review with approval or list of remaining issues"),
-                crewai_llm,
-                supports_tools,
-            )
-
-            qa_report_path = report_dir / f"iteration_{iteration}_qa.md"
-            qa_report_path.write_text(qa_output)
-
-            is_approved = qa_output.strip().upper().startswith("APPROVED")
-            self._update_agent_run(
-                qa_ar, "completed",
-                output={"result": qa_output[:8000], "iteration": iteration, "approved": is_approved},
-            )
-            self._log(
-                orchestrator_run_id, "INFO",
-                f"Iteration {iteration} QA result",
-                {"approved": is_approved, "preview": qa_output[:200]},
-            )
-
-            agent_outputs.append({"agent": "QAEngineerAgent", "output": qa_output, "status": "completed", "iteration": iteration})
-            tasks_created_log.append({"agent": "QAEngineerAgent", "description": f"Iteration {iteration} review", "status": "completed"})
-
-            qa_feedback = qa_output
-            final_output = qa_output
-
-            if is_approved:
-                self._log(orchestrator_run_id, "INFO", f"QA approved on iteration {iteration}")
-                break
-
-        return final_output
-
-    # ------------------------------------------------------------------
-    # Main run
+    # Main run — unified agentic loop
     # ------------------------------------------------------------------
 
     def run(self, chat_id: int, user_message: str, task_id: int) -> OrchestratorResult:
         errors: list[str] = []
-        agent_outputs: list[dict] = []
-        agent_run_map: dict[str, AgentRun] = {}  # initialized here so except block can access it
+        all_outputs: list[dict] = []          # {"agent", "output", "iteration"}
+        tasks_created_log: list[dict] = []
+        active_runs: dict[str, AgentRun] = {}
 
-        # Create the orchestrator's own tracking record
         orchestrator_run = self._create_agent_run(
             chat_id=chat_id,
             agent_name="ChiefOrchestratorAgent",
@@ -458,161 +456,121 @@ class Orchestrator:
             reasoning = decision.get("reasoning", "")
             task_defs = decision.get("tasks", [])
 
-            # Validate that selected agents exist in the registry
-            valid_task_defs = []
+            # Validate agents exist in registry
+            valid_tasks = []
             for td in task_defs:
-                agent_name = td.get("agent", "")
-                if agent_name in AGENT_REGISTRY:
-                    valid_task_defs.append(td)
+                if td.get("agent", "") in AGENT_REGISTRY:
+                    valid_tasks.append(td)
                 else:
-                    msg = f"Agent '{agent_name}' not found in registry — skipping"
+                    msg = f"Agent '{td.get('agent')}' not in registry — skipped"
                     self._log(orchestrator_run.id, "WARNING", msg)
                     errors.append(msg)
 
-            # Fallback: always have at least one agent
-            if not valid_task_defs:
-                self._log(
-                    orchestrator_run.id,
-                    "WARNING",
-                    "No valid agents in decision — falling back to ProjectManagerAgent",
-                )
-                valid_task_defs = [
-                    {
-                        "agent": "ProjectManagerAgent",
-                        "description": user_message,
-                        "expected_output": "A detailed, helpful response to the user's request",
-                    }
-                ]
+            if not valid_tasks:
+                self._log(orchestrator_run.id, "WARNING", "No valid agents — falling back to ProjectManagerAgent")
+                valid_tasks = [{
+                    "agent": "ProjectManagerAgent",
+                    "description": user_message,
+                    "expected_output": "A detailed, helpful response to the user's request",
+                }]
 
             crewai_llm = self._crewai()
             supports_tools = settings.LLM_SUPPORTS_TOOLS
-            tasks_created_log = []
+            max_iter = settings.MAX_ORCHESTRATOR_ITERATIONS
+            iteration = 1
+            current_tasks = valid_tasks
 
-            # Detect whether review loop is needed
-            selected_names = {td["agent"] for td in valid_task_defs}
-            use_review_loop = REVIEW_LOOP_AGENTS.issubset(selected_names)
+            # ── Unified agentic loop ──────────────────────────────────
+            while iteration <= max_iter:
+                self._log(orchestrator_run.id, "INFO", f"Agentic loop iteration {iteration}/{max_iter}", {
+                    "agents": [td["agent"] for td in current_tasks],
+                })
 
-            if use_review_loop:
-                backend_td = next(td for td in valid_task_defs if td["agent"] == "BackendDeveloperAgent")
-                qa_td = next(td for td in valid_task_defs if td["agent"] == "QAEngineerAgent")
-                other_tds = [td for td in valid_task_defs if td["agent"] not in REVIEW_LOOP_AGENTS]
+                prior_context = self._build_prior_context(all_outputs)
 
-                self._log(orchestrator_run.id, "INFO", "Starting review loop", {"max_iterations": MAX_REVIEW_ITERATIONS})
-
-                # Run any other agents (e.g. ProjectManager) with standard sequential crew first
-                if other_tds:
-                    for td in other_tds:
-                        ar = self._create_agent_run(
-                            chat_id=chat_id,
-                            agent_name=td["agent"],
-                            task_description=td["description"],
-                            input_payload={"description": td["description"]},
-                        )
-                        agent_run_map[td["agent"]] = ar
-                        self._update_agent_run(ar, "running")
-                        out = self._run_single_agent(
-                            td["agent"], td["description"],
-                            td.get("expected_output", "A detailed response"),
-                            crewai_llm, supports_tools,
-                        )
-                        self._update_agent_run(ar, "completed", output={"result": out[:8000]})
-                        agent_outputs.append({"agent": td["agent"], "output": out, "status": "completed"})
-                        tasks_created_log.append({"agent": td["agent"], "description": td["description"], "status": "completed"})
-
-                final_answer = self._run_review_loop(
-                    chat_id=chat_id,
-                    backend_td=backend_td,
-                    qa_td=qa_td,
-                    crewai_llm=crewai_llm,
-                    supports_tools=supports_tools,
-                    orchestrator_run_id=orchestrator_run.id,
-                    agent_outputs=agent_outputs,
-                    tasks_created_log=tasks_created_log,
-                    user_language=user_language,
-                )
-
-            else:
-                # Standard sequential crew
-                for td in valid_task_defs:
+                for td in current_tasks:
                     agent_name = td["agent"]
                     ar = self._create_agent_run(
                         chat_id=chat_id,
                         agent_name=agent_name,
-                        task_description=td["description"],
-                        input_payload={"description": td["description"], "expected_output": td.get("expected_output", "")},
+                        task_description=f"[Iter {iteration}] {td['description'][:100]}",
+                        input_payload={"iteration": iteration, "description": td["description"]},
                     )
-                    agent_run_map[agent_name] = ar
+                    active_runs[agent_name] = ar
+                    self._update_agent_run(ar, "running")
 
-                crew_agents = []
-                crew_tasks: list[CrewTask] = []
-                last_idx = len(valid_task_defs) - 1
-                for i, td in enumerate(valid_task_defs):
-                    agent_name = td["agent"]
-                    crewai_agent = AGENT_REGISTRY[agent_name].get_crewai_agent(llm=crewai_llm, with_tools=supports_tools)
-                    crew_agents.append(crewai_agent)
-                    task_context = crew_tasks.copy() if crew_tasks else None
-                    desc = td["description"]
-                    if i == last_idx and user_language != "English":
-                        desc += f"\n\nIMPORTANT: Write your final response in {user_language}."
-                    crew_tasks.append(CrewTask(
-                        description=desc,
+                    output = self._run_single_agent(
+                        agent_name=agent_name,
+                        task_description=td["description"],
                         expected_output=td.get("expected_output", "A detailed response"),
-                        agent=crewai_agent,
-                        context=task_context,
-                    ))
-                    self._update_agent_run(agent_run_map[agent_name], "running")
+                        crewai_llm=crewai_llm,
+                        supports_tools=supports_tools,
+                        prior_context=prior_context,
+                    )
 
-                self._log(orchestrator_run.id, "INFO", "CrewAI crew starting", {"agents": [td["agent"] for td in valid_task_defs]})
-
-                crew_result = Crew(agents=crew_agents, tasks=crew_tasks, process=Process.sequential, verbose=True).kickoff()
-
-                for td, crew_task in zip(valid_task_defs, crew_tasks):
-                    agent_name = td["agent"]
-                    ar = agent_run_map[agent_name]
-                    task_output_text = ""
-                    if hasattr(crew_task, "output") and crew_task.output is not None:
-                        out = crew_task.output
-                        task_output_text = out.raw if hasattr(out, "raw") else str(out)
-                    if not task_output_text:
-                        task_output_text = str(crew_result) if crew_result else ""
-                    self._update_agent_run(ar, "completed", output={"result": task_output_text[:8000]})
-                    self._log(ar.id, "INFO", f"Agent {agent_name} completed successfully", {"output_preview": task_output_text[:300]})
-                    agent_outputs.append({"agent": agent_name, "output": task_output_text, "status": "completed"})
+                    self._update_agent_run(ar, "completed", output={"result": output[:8000], "iteration": iteration})
+                    self._log(ar.id, "INFO", f"{agent_name} completed", {"preview": output[:200]})
+                    all_outputs.append({"agent": agent_name, "output": output, "iteration": iteration})
                     tasks_created_log.append({"agent": agent_name, "description": td["description"], "status": "completed"})
 
-                final_answer = str(crew_result) if crew_result else "Task completed."
+                # Last iteration — skip evaluation, go straight to synthesis
+                if iteration >= max_iter:
+                    self._log(orchestrator_run.id, "INFO", "Max iterations reached — stopping loop")
+                    break
 
-            # Persist as assistant message
-            self.db.add(
-                Message(chat_id=chat_id, role="assistant", content=final_answer)
+                # Evaluate: is the work done?
+                evaluation = self._evaluate_result(user_message, all_outputs, orchestrator_run.id)
+
+                if evaluation.get("is_complete", True):
+                    self._log(orchestrator_run.id, "INFO", "Evaluation: complete", {
+                        "reason": evaluation.get("reason", "")[:200],
+                    })
+                    break
+
+                # Not done — prepare next agent
+                next_agent = evaluation.get("next_agent", "")
+                next_task = evaluation.get("next_task", {})
+
+                if not next_agent or next_agent not in AGENT_REGISTRY:
+                    self._log(orchestrator_run.id, "WARNING",
+                        f"Evaluation suggested unknown agent '{next_agent}' — stopping")
+                    break
+
+                self._log(orchestrator_run.id, "INFO", f"Evaluation: calling {next_agent} next", {
+                    "reason": evaluation.get("reason", "")[:200],
+                })
+                current_tasks = [{"agent": next_agent, **next_task}]
+                iteration += 1
+
+            # ── Synthesize final answer ───────────────────────────────
+            final_answer = self._synthesize_answer(
+                user_message=user_message,
+                all_outputs=all_outputs,
+                user_language=user_language,
+                run_id=orchestrator_run.id,
             )
+
+            self.db.add(Message(chat_id=chat_id, role="assistant", content=final_answer))
             self.db.commit()
 
-            self._update_agent_run(
-                orchestrator_run,
-                "completed",
-                output={
-                    "reasoning": reasoning,
-                    "selected_agents": [td["agent"] for td in valid_task_defs],
-                    "final_answer_preview": final_answer[:500],
-                },
-            )
-            self._log(
-                orchestrator_run.id,
-                "INFO",
-                "Orchestration completed",
-                {
-                    "agents_used": [td["agent"] for td in valid_task_defs],
-                    "final_answer_preview": final_answer[:200],
-                },
-            )
+            self._update_agent_run(orchestrator_run, "completed", output={
+                "reasoning": reasoning,
+                "iterations": iteration,
+                "agents_used": [o["agent"] for o in all_outputs],
+                "final_answer_preview": final_answer[:500],
+            })
+            self._log(orchestrator_run.id, "INFO", "Orchestration completed", {
+                "total_iterations": iteration,
+                "agents": [o["agent"] for o in all_outputs],
+                "final_preview": final_answer[:200],
+            })
 
             return OrchestratorResult(
                 reasoning=reasoning,
-                selected_agents=[td["agent"] for td in valid_task_defs],
+                selected_agents=list({o["agent"] for o in all_outputs}),
                 tasks_created=tasks_created_log,
                 final_answer=final_answer,
-                agent_outputs=agent_outputs,
+                agent_outputs=all_outputs,
                 errors=errors,
             )
 
@@ -622,13 +580,10 @@ class Orchestrator:
             errors.append(error_msg)
 
             self._update_agent_run(orchestrator_run, "failed", error=error_msg)
-
-            # Mark any still-running agent runs as failed
-            for ar in agent_run_map.values():
+            for ar in active_runs.values():
                 if ar.status == "running":
                     self._update_agent_run(ar, "failed", error=error_msg)
 
-            # Persist error message so the user sees it in the chat
             error_reply = (
                 f"❌ Помилка при обробці запиту:\n\n{error_msg}\n\n"
                 "Перевірте:\n"
