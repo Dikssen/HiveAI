@@ -72,7 +72,7 @@ class LangGraphRunner(AgentRunner):
 
         return self._llm
 
-    def run(self, agent_name: str, task_description: str, expected_output: str, supports_tools: bool) -> str:
+    def run(self, agent_name: str, task_description: str, expected_output: str, supports_tools: bool, db=None) -> str:
         from langgraph.prebuilt import create_react_agent
 
         llm = self._get_llm(supports_tools=supports_tools)
@@ -101,7 +101,8 @@ class LangGraphRunner(AgentRunner):
                         elapsed_s=elapsed, output_chars=len(output))
             return output
 
-        tools = [_wrap_crewai_tool(t) for t in agent_impl.get_tools()]
+        active_tools = agent_impl.get_active_tools(db) if db is not None else agent_impl.get_tools()
+        tools = [_wrap_crewai_tool(t) for t in active_tools]
         graph = create_react_agent(llm, tools, prompt=system_prompt)
 
         result = graph.invoke({"messages": [HumanMessage(content=task_description)]})

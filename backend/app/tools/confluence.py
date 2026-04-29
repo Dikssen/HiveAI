@@ -62,7 +62,7 @@ def _confluence_errors():
         elif status == 403:
             msg = "Access denied — the API token may lack required permissions."
         elif status == 404:
-            msg = "Resource not found — check CONFLUENCE_URL and space/page identifiers."
+            msg = "404 Not Found — page or resource does not exist."
         else:
             msg = str(e)
         raise RuntimeError(
@@ -71,10 +71,14 @@ def _confluence_errors():
     except Exception as e:
         # Catches atlassian-python-api specific errors (ApiPermissionError, ApiError, etc.)
         msg = str(e)
-        if "permission" in msg.lower() or "forbidden" in msg.lower():
+        # ApiError from atlassian library for 404 contains this phrase but also "permission" —
+        # check "no content" first to avoid misclassifying a missing page as an auth error.
+        if "no content" in msg.lower() or ("not found" in msg.lower() and "permission" not in msg.lower()):
+            raise RuntimeError(
+                f"CONFLUENCE_NOT_FOUND: 404 Not Found — {msg} Do not retry — inform the user."
+            ) from e
+        elif "permission" in msg.lower() or "forbidden" in msg.lower():
             hint = "The API token lacks required Confluence permissions."
-        elif "not found" in msg.lower():
-            hint = "Resource not found — check space/page identifiers."
         elif "unauthorized" in msg.lower():
             hint = "Invalid credentials — check CONFLUENCE_USER and CONFLUENCE_API_TOKEN."
         else:

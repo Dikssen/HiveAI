@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Any, Optional
 
 
 class AgentRunner(ABC):
@@ -9,6 +10,7 @@ class AgentRunner(ABC):
         task_description: str,
         expected_output: str,
         supports_tools: bool,
+        db: Optional[Any] = None,
     ) -> str:
         """Run agent with given task and return its output as a string."""
         ...

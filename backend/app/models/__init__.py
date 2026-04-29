@@ -4,5 +4,7 @@ from app.models.message import Message
 from app.models.agent_run import AgentRun
 from app.models.task import Task
 from app.models.worker_log import WorkerLog
+from app.models.agent import Agent
+from app.models.agent_tool_config import AgentToolConfig
 
-__all__ = ["Chat", "Message", "AgentRun", "Task", "WorkerLog"]
+__all__ = ["Chat", "Message", "AgentRun", "Task", "WorkerLog", "Agent", "AgentToolConfig"]

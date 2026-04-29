@@ -24,10 +24,24 @@ AGENT_REGISTRY: dict = {
 }
 
 
-def get_agent_descriptions() -> str:
-    """Return a formatted string of all agents and their capabilities for the orchestrator prompt."""
+def get_agent_descriptions(db=None) -> str:
+    """Return a formatted string of agents and their capabilities for the orchestrator prompt.
+
+    If db is provided, only enabled agents (per DB config) are included.
+    """
+    if db is not None:
+        from app.models.agent import Agent as AgentModel
+        enabled_rows = db.query(AgentModel).filter(AgentModel.is_enabled == True).all()  # noqa: E712
+        enabled_names = {row.name for row in enabled_rows}
+        agents_to_show = {
+            name: agent for name, agent in AGENT_REGISTRY.items()
+            if name in enabled_names
+        }
+    else:
+        agents_to_show = AGENT_REGISTRY
+
     lines = []
-    for name, agent in AGENT_REGISTRY.items():
+    for name, agent in agents_to_show.items():
         lines.append(f"\n- {name}")
         lines.append(f"  Role: {agent.role}")
         lines.append(f"  Description: {agent.description}")

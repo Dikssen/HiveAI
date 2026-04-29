@@ -257,16 +257,20 @@ class Orchestrator(BaseOrchestrator):
 
     def _make_decision(self, user_message: str, chat_history: str, run_id: int, user_language: str) -> dict:
         system = ORCHESTRATOR_SYSTEM_PROMPT.format(
-            agent_descriptions=get_agent_descriptions(),
+            agent_descriptions=get_agent_descriptions(db=self.db),
             user_language=user_language,
         )
         context = (
             f"Chat history:\n{chat_history}\n\nCurrent request: {user_message}"
             if chat_history else user_message
         )
+        from app.models.agent import Agent as AgentModel
+        enabled_names = [
+            r.name for r in self.db.query(AgentModel).filter(AgentModel.is_enabled == True).all()  # noqa: E712
+        ]
         self._log(run_id, "INFO", "Planning: selecting agents", {
             "user_message": user_message[:300],
-            "available_agents": list(AGENT_REGISTRY.keys()),
+            "available_agents": enabled_names,
         })
         response = self._langchain_json().invoke([SystemMessage(content=system), HumanMessage(content=context)])
         raw = response.content if hasattr(response, "content") else str(response)
@@ -282,7 +286,7 @@ class Orchestrator(BaseOrchestrator):
     # ------------------------------------------------------------------
 
     def _evaluate_result(self, user_message: str, all_outputs: list[dict], run_id: int) -> dict:
-        system = EVALUATION_SYSTEM_PROMPT.format(agent_descriptions=get_agent_descriptions())
+        system = EVALUATION_SYSTEM_PROMPT.format(agent_descriptions=get_agent_descriptions(db=self.db))
         outputs_text = "\n\n".join(
             f"--- Iteration {o['iteration']} | {o['agent']} ---\n{o['output']}"
             for o in all_outputs
@@ -322,6 +326,11 @@ class Orchestrator(BaseOrchestrator):
     # ------------------------------------------------------------------
     # Agent runner — injects accumulated context from prior agents
     # ------------------------------------------------------------------
+
+    def _is_agent_enabled(self, agent_name: str) -> bool:
+        from app.models.agent import Agent
+        row = self.db.query(Agent).filter(Agent.name == agent_name).first()
+        return row.is_enabled if row else True
 
     def _build_prior_context(self, all_outputs: list[dict]) -> str:
         if not all_outputs:
@@ -365,7 +374,7 @@ class Orchestrator(BaseOrchestrator):
         else:
             full_description = task_description
 
-        output = self._runner().run(agent_name, full_description, expected_output, supports_tools)
+        output = self._runner().run(agent_name, full_description, expected_output, supports_tools, db=self.db)
 
         if self._is_unexecuted_action(output):
             logger.warning("Agent returned raw action JSON — tool was not executed", agent=agent_name, raw=output[:200])
@@ -404,23 +413,32 @@ class Orchestrator(BaseOrchestrator):
             reasoning = decision.get("reasoning", "")
             task_defs = decision.get("tasks", [])
 
-            # Validate agents exist in registry
+            # Validate agents exist in registry and are enabled in DB
             valid_tasks = []
             for td in task_defs:
-                if td.get("agent", "") in AGENT_REGISTRY:
-                    valid_tasks.append(td)
-                else:
-                    msg = f"Agent '{td.get('agent')}' not in registry — skipped"
+                agent_name = td.get("agent", "")
+                if agent_name not in AGENT_REGISTRY:
+                    msg = f"Agent '{agent_name}' not in registry — skipped"
                     self._log(orchestrator_run.id, "WARNING", msg)
                     errors.append(msg)
+                elif not self._is_agent_enabled(agent_name):
+                    msg = f"Agent '{agent_name}' is disabled in DB — skipped"
+                    self._log(orchestrator_run.id, "WARNING", msg)
+                    errors.append(msg)
+                else:
+                    valid_tasks.append(td)
 
             if not valid_tasks:
-                self._log(orchestrator_run.id, "WARNING", "No valid agents — falling back to ProjectManagerAgent")
-                valid_tasks = [{
-                    "agent": "ProjectManagerAgent",
-                    "description": user_message,
-                    "expected_output": "A detailed, helpful response to the user's request",
-                }]
+                fallback = "ProjectManagerAgent"
+                if self._is_agent_enabled(fallback):
+                    self._log(orchestrator_run.id, "WARNING", "No valid agents — falling back to ProjectManagerAgent")
+                    valid_tasks = [{
+                        "agent": fallback,
+                        "description": user_message,
+                        "expected_output": "A detailed, helpful response to the user's request",
+                    }]
+                else:
+                    raise RuntimeError("No enabled agents available to handle the request")
 
             supports_tools = settings.LLM_SUPPORTS_TOOLS
             max_iter = settings.MAX_ORCHESTRATOR_ITERATIONS
@@ -491,7 +509,7 @@ class Orchestrator(BaseOrchestrator):
                 next_agent = evaluation.get("next_agent", "")
                 next_task = evaluation.get("next_task", {})
 
-                if not next_agent or next_agent not in AGENT_REGISTRY:
+                if not next_agent or next_agent not in AGENT_REGISTRY or not self._is_agent_enabled(next_agent):
                     self._log(orchestrator_run.id, "WARNING", "evaluation_unknown_agent", {
                         "next_agent": next_agent,
                     })
