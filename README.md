@@ -1,4 +1,4 @@
-# AI Operations Platform
+# HiveAI
 
 An AI-powered operations platform for IT companies. Business users describe tasks in natural language — a multi-agent system handles the execution across your internal tools and systems.
 

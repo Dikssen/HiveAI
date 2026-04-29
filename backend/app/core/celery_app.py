@@ -12,7 +12,7 @@ register(
 )
 
 celery_app = Celery(
-    "it_company",
+    "hiveai",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
     include=["app.workers.tasks"],

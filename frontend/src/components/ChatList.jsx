@@ -89,7 +89,7 @@ export default function ChatList({ chats, activeChatId, onSelect, onCreate, onDe
         }}
       >
         <div>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>🤖 IT Company AI</div>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>🐝 HiveAI</div>
           <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
             Multi-Agent Platform
           </div>

@@ -7,8 +7,8 @@ from app.api.agent_runs import router as agent_runs_router
 from app.api.health import router as health_router
 
 app = FastAPI(
-    title="IT Company AI Platform",
-    description="Multi-agent AI platform simulating an IT company. Powered by CrewAI + Ollama.",
+    title="HiveAI",
+    description="Multi-agent AI operations platform. Powered by LangGraph + Ollama.",
     version="1.0.0",
 )
 
@@ -28,4 +28,4 @@ app.include_router(health_router, prefix="/api")
 
 @app.get("/")
 def root():
-    return {"message": "IT Company AI Platform", "docs": "/docs"}
+    return {"message": "HiveAI", "docs": "/docs"}
