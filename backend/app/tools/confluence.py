@@ -221,11 +221,11 @@ class ConfluenceGetSpaceRootTool(LoggedTool):
             homepage_id = homepage.get("id")
             if not homepage_id:
                 return f"Could not find homepage for space '{space}'."
-            children = client.get_child_pages(homepage_id)
+            children = list(client.get_child_pages(homepage_id))[:limit]
             if not children:
                 return f"Space '{space}' has no top-level pages under the homepage."
             lines = [f"Space: {space} (homepage ID: {homepage_id})", "Top-level pages:"]
-            for page in children[:limit]:
+            for page in children:
                 has_children = "  [has children]" if page.get("childTypes", {}).get("page", {}).get("value") else ""
                 lines.append(f"  - ID: {page['id']} | {page['title']}{has_children}")
             return "\n".join(lines)
@@ -252,11 +252,11 @@ class ConfluenceGetChildPagesTool(LoggedTool):
             parent = client.get_page_by_id(page_id)
             if not parent:
                 return f"Page {page_id} not found."
-            children = client.get_child_pages(page_id)
+            children = list(client.get_child_pages(page_id))[:limit]
             if not children:
                 return f"Page '{parent['title']}' (ID: {page_id}) has no child pages."
             lines = [f"Children of '{parent['title']}' (ID: {page_id}):"]
-            for page in children[:limit]:
+            for page in children:
                 has_children = "  [has children]" if page.get("childTypes", {}).get("page", {}).get("value") else ""
                 lines.append(f"  - ID: {page['id']} | {page['title']}{has_children}")
             return "\n".join(lines)
@@ -344,7 +344,7 @@ class ConfluenceUpdateSectionTool(LoggedTool):
     def _run(self, page_id: str, heading: str, new_content_markdown: str) -> str:
         with _confluence_errors():
             client = _get_client()
-            page = client.get_page_by_id(page_id, expand="body.storage,version")
+            page = client.get_page_by_id(page_id, expand="body.storage")
             if not page:
                 return "Page not found."
             body_html = page.get("body", {}).get("storage", {}).get("value", "")
@@ -352,8 +352,7 @@ class ConfluenceUpdateSectionTool(LoggedTool):
             new_body = _replace_section_html(body_html, heading, new_content_html)
             if new_body is None:
                 return f"Section '{heading}' not found. Use ConfluenceGetPage to check available headings."
-            version = page["version"]["number"] + 1
-            client.update_page(page_id=page_id, title=page["title"], body=new_body, version=version)
+            client.update_page(page_id=page_id, title=page["title"], body=new_body)
             return f"Section '{heading}' updated successfully in page '{page['title']}'."
 
 
@@ -376,15 +375,48 @@ class ConfluenceAppendSectionTool(LoggedTool):
     def _run(self, page_id: str, heading: str, content_markdown: str, heading_level: int = 2) -> str:
         with _confluence_errors():
             client = _get_client()
-            page = client.get_page_by_id(page_id, expand="body.storage,version")
+            page = client.get_page_by_id(page_id, expand="body.storage")
             if not page:
                 return "Page not found."
             body_html = page.get("body", {}).get("storage", {}).get("value", "")
             new_section = f"<h{heading_level}>{heading}</h{heading_level}>\n{_markdown_to_storage(content_markdown)}"
             new_body = body_html + "\n" + new_section
-            version = page["version"]["number"] + 1
-            client.update_page(page_id=page_id, title=page["title"], body=new_body, version=version)
+            client.update_page(page_id=page_id, title=page["title"], body=new_body)
             return f"Section '{heading}' appended to page '{page['title']}'."
+
+
+class ConfluenceMovePageInput(BaseModel):
+    page_id: str = Field(description="ID of the page to move")
+    new_parent_id: str = Field(description="ID of the new parent page")
+
+
+class ConfluenceMovePageTool(LoggedTool):
+    name: str = "ConfluenceMovePage"
+    description: str = (
+        "Move a Confluence page to a new parent page. "
+        "Use ConfluenceGetSpaceRoot or ConfluenceGetChildPages to find the correct parent_id first. "
+        "The page content stays unchanged — only its location in the hierarchy changes."
+    )
+    args_schema: type[BaseModel] = ConfluenceMovePageInput
+
+    def _run(self, page_id: str, new_parent_id: str) -> str:
+        with _confluence_errors():
+            client = _get_client()
+            page = client.get_page_by_id(page_id, expand="body.storage")
+            if not page:
+                return f"Page {page_id} not found."
+            parent = client.get_page_by_id(new_parent_id)
+            if not parent:
+                return f"Parent page {new_parent_id} not found."
+            body_html = page.get("body", {}).get("storage", {}).get("value", "")
+            client.update_page(
+                page_id=page_id,
+                title=page["title"],
+                body=body_html,
+                parent_id=new_parent_id,
+                representation="storage",
+            )
+            return f"Page '{page['title']}' moved under '{parent['title']}' (ID: {new_parent_id})."
 
 
 # ---------------------------------------------------------------------------
@@ -405,5 +437,6 @@ def get_confluence_tools() -> list:
             ConfluenceCreatePageTool(),
             ConfluenceUpdateSectionTool(),
             ConfluenceAppendSectionTool(),
+            ConfluenceMovePageTool(),
         ]
     return tools

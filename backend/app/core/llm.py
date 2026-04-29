@@ -76,7 +76,7 @@ def get_langchain_llm(
         }
 
         if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
+            kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
 
         return ChatOpenAI(**kwargs)
 

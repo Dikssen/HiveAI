@@ -1,286 +1,153 @@
-# IT Company AI Platform
+# AI Operations Platform
 
-Мінімальна web-платформа, яка симулює маленьку IT-компанію на базі **CrewAI**.
+An AI-powered operations platform for IT companies. Business users describe tasks in natural language — a multi-agent system handles the execution across your internal tools and systems.
 
-Користувач відкриває web-чат, пише задачу → **ChiefOrchestrator** аналізує запит, вибирає агентів, запускає їх через **Celery workers** → збирає результати і повертає відповідь у чат.
+**Current integrations:** Confluence  
+**Planned:** OpenStack · Fleio · Jira · Analytics
 
 ---
 
-## Архітектура
+## How it works
 
 ```
-Browser → FastAPI (backend) → Celery task → Orchestrator
-                                               ↓
-                               CrewAI Crew (selected agents)
-                                    ↓
-                               PostgreSQL (results + logs)
-                                    ↓
-                               Browser ← polling every 2.5s
+User writes a task in chat
+        ↓
+ChiefOrchestrator (LangGraph) analyzes and builds an execution plan
+        ↓
+Specialized agents run in parallel or sequentially via Celery workers
+        ↓
+Each agent uses tools to interact with real systems (Confluence, etc.)
+        ↓
+Results are synthesized and returned to the user
 ```
 
-**Сервіси:**
-| Сервіс | Технологія | Порт |
-|--------|-----------|------|
+**Example flow:**
+> *"Write technical documentation for the SSH key sync module and place it under the Backend section in Confluence"*
+1. Orchestrator assigns the task to `BackendDeveloperAgent`
+2. Agent calls `ConfluenceGetSpaceRoot` → navigates to the correct parent page
+3. Agent calls `ConfluenceCreatePage` with structured content
+4. Final answer includes the Confluence page URL
+
+---
+
+## Architecture
+
+```
+Browser
+  │
+  ▼
+FastAPI (backend :8000)
+  │  REST API + polling
+  ▼
+Celery Task  ──────────────────────────────────────
+  │                                               │
+  ▼                                               ▼
+LangGraph Orchestrator                      PostgreSQL
+  │  plan → run → evaluate → synthesize     (results, logs,
+  │                                          agent run history)
+  ├── ProjectManagerAgent
+  ├── BackendDeveloperAgent  ──► Confluence tools
+  ├── DevOpsAgent
+  ├── DataAnalystAgent
+  ├── SupportEngineerAgent
+  ├── QAEngineerAgent
+  └── BusinessAnalystAgent
+
+Redis ← Celery broker
+```
+
+| Service | Technology | Port |
+|---------|-----------|------|
 | frontend | React + Vite → nginx | 3000 |
 | backend | FastAPI + Python | 8000 |
-| worker | Celery | — |
-| redis | Redis 7 (Celery broker) | 6379 |
+| worker | Celery (prefork) | — |
+| redis | Redis 7 | 6379 |
 | postgres | PostgreSQL 16 | 5432 |
-| flower | Celery monitoring | 5555 |
+| flower | Celery monitor | 5555 |
 
-**LLM:** Ollama запускається локально на хості (поза Docker).
+**LLM:** Runs via Ollama on the host machine (outside Docker). Any OpenAI-compatible provider also works.
 
 ---
 
-## Встановлення і запуск
+## Quick Start
 
-### 1. Встановіть Ollama локально
+### 1. Install Ollama
 
 **macOS / Linux:**
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-```
-
-**Windows:** завантажте інсталятор з [ollama.com](https://ollama.com)
-
-### 2. Запустіть Ollama
-
-```bash
 ollama serve
-```
-
-Перевірте, що працює:
-```bash
-curl http://localhost:11434/api/tags
-```
-
-### 3. Завантажте модель
-
-```bash
 ollama pull qwen2.5:14b
 ```
 
-Перевірте, що модель доступна:
-```bash
-ollama list
-# Має показати: qwen2.5:14b
-```
+**Windows:** download from [ollama.com](https://ollama.com)
 
-### 4. Налаштуйте .env
+### 2. Configure environment
 
 ```bash
 cp .env.example .env
 ```
 
-Значення за замовчуванням вже правильні для локального запуску:
-```
+Defaults work for local Ollama out of the box:
+```env
 LLM_PROVIDER=ollama
 LLM_MODEL=qwen2.5:14b
 LLM_BASE_URL=http://host.docker.internal:11434
+LLM_SUPPORTS_TOOLS=true
+
+ORCHESTRATOR_RUNNER=langgraph
+MAX_ORCHESTRATOR_ITERATIONS=5
 ```
 
-> **Важливо для Linux:** `host.docker.internal` автоматично налаштовується через `extra_hosts` у docker-compose. Перевірте, що Docker версії 20.10+.
+**Confluence integration (optional):**
+```env
+CONFLUENCE_URL=https://your-company.atlassian.net
+CONFLUENCE_USER=your@email.com
+CONFLUENCE_API_TOKEN=your_token
+CONFLUENCE_SPACE_KEY=DEV
+CONFLUENCE_WRITE_ENABLED=true
+```
 
-### 5. Запустіть через Docker Compose
+### 3. Start
 
 ```bash
-cd it-company
 docker compose up --build
 ```
 
-Перший запуск займе 5-10 хвилин (завантаження образів, збірка frontend/backend).
+First run takes 5–10 minutes (image downloads + frontend build).
 
-### 6. Відкрийте браузер
+### 4. Open
 
-- **Frontend:** http://localhost:3000
-- **API Docs:** http://localhost:8000/docs
-- **Flower (Celery monitor):** http://localhost:5555
+| URL | Description |
+|-----|-------------|
+| http://localhost:3000 | Chat UI |
+| http://localhost:8000/docs | API docs (Swagger) |
+| http://localhost:5555 | Celery Flower monitor |
 
 ---
 
-## Використання
-
-1. Відкрийте http://localhost:3000
-2. Натисніть **+** щоб створити новий чат
-3. Напишіть задачу, наприклад:
+## Usage examples
 
 ```
-Потрібно зробити аналітику по використанню тех підтримки
-```
+Write technical documentation for the auth module and publish it to Confluence
 
-4. Натисніть Enter або кнопку →
-5. Спостерігайте в реальному часі:
-   - Статус задачі: pending → running → completed
-   - Agent Execution Timeline внизу (які агенти були викликані)
-   - Фінальна відповідь з'явиться в чаті
+Analyze support ticket trends from last month
 
-### Приклади запитів для тестування
+Review the deployment configuration and suggest improvements
 
-```
-Зроби аналітику по зверненнях в техпідтримку
+Create a project plan for implementing dark mode
 
-Подивись логи і знайди причину падіння сервісу
-
-Проаналізуй помилку 503 в логах
-
-Зроби ревʼю коду sample_code.py
-
-Перевір docker конфігурацію і знайди проблеми
-
-Підготуй план реалізації dark mode для web-додатку
-
-Хто був відповідальний за інцидент 15 січня?
-
-Поясни, які агенти були залучені і що вони зробили
+Investigate the 503 errors in service logs and summarize the root cause
 ```
 
 ---
 
-## Застосування міграцій (вручну)
+## Switching LLM
 
-Міграції автоматично запускаються при старті backend. Якщо потрібно вручну:
+Edit `.env` and restart `backend` + `worker`:
 
-```bash
-# Всередині контейнера backend
-docker compose exec backend alembic upgrade head
-
-# Або локально (потрібен DATABASE_URL в .env)
-cd backend
-alembic upgrade head
-```
-
-Створити нову міграцію:
-```bash
-docker compose exec backend alembic revision --autogenerate -m "my_change"
-```
-
----
-
-## API Endpoints
-
-| Метод | URL | Опис |
-|-------|-----|------|
-| `GET` | `/api/health` | Healthcheck backend + DB |
-| `GET` | `/api/health/llm` | Перевірка Ollama + моделі |
-| `POST` | `/api/chats` | Створити новий чат |
-| `GET` | `/api/chats` | Список чатів |
-| `GET` | `/api/chats/{id}` | Чат з повідомленнями |
-| `POST` | `/api/chats/{id}/messages` | Відправити повідомлення |
-| `GET` | `/api/chats/{id}/messages` | Повідомлення чату |
-| `GET` | `/api/tasks/{id}` | Статус Celery задачі |
-| `GET` | `/api/chats/{id}/agent-runs` | Agent runs по чату |
-| `GET` | `/api/agent-runs/{id}/logs` | Логи agent run |
-
-Swagger UI: http://localhost:8000/docs
-
----
-
-## Як додати нового агента
-
-1. Створіть файл `backend/app/agents/my_agent.py`:
-
-```python
-from app.agents.base import BaseITAgent
-from app.tools.report_writer import ReportWriterTool
-
-class MyCustomAgent(BaseITAgent):
-    name = "MyCustomAgent"
-    role = "My Custom Role"
-    goal = "What this agent tries to achieve"
-    backstory = "Background story for the LLM persona"
-    description = "One-line description for the orchestrator"
-    capabilities = ["capability 1", "capability 2"]
-
-    def get_tools(self):
-        return [ReportWriterTool()]
-```
-
-2. Зареєструйте в `backend/app/agents/agent_registry.py`:
-
-```python
-from app.agents.my_agent import MyCustomAgent
-
-AGENT_REGISTRY = {
-    ...
-    "MyCustomAgent": MyCustomAgent(),
-}
-```
-
-Після перезапуску backend/worker агент автоматично стане доступним для orchestrator.
-
----
-
-## Як додати новий tool
-
-1. Створіть файл `backend/app/tools/my_tool.py`:
-
-```python
-from pydantic import BaseModel, Field
-from app.tools.base import LoggedTool
-
-class MyToolInput(BaseModel):
-    query: str = Field(description="What to search for")
-
-class MyTool(LoggedTool):
-    name: str = "MyTool"
-    description: str = "What this tool does — the LLM reads this"
-    args_schema: type[BaseModel] = MyToolInput
-
-    def _run(self, query: str) -> str:
-        # Tool logic here
-        return f"Result for: {query}"
-```
-
-2. Додайте tool до потрібних агентів у їх `get_tools()` методі.
-
----
-
-## Дебаг Celery Worker
-
-```bash
-# Переглянути логи worker
-docker compose logs -f worker
-
-# Flower UI (Celery monitor)
-open http://localhost:5555
-
-# Запустити worker локально (для дебагу)
-cd backend
-celery -A app.core.celery_app worker --loglevel=debug --concurrency=1
-
-# Переглянути task queue
-docker compose exec redis redis-cli LLEN celery
-```
-
----
-
-## Перегляд логів
-
-```bash
-# Всі сервіси
-docker compose logs -f
-
-# Тільки worker
-docker compose logs -f worker
-
-# Тільки backend
-docker compose logs -f backend
-
-# Agent runs через API
-curl http://localhost:8000/api/chats/1/agent-runs | jq .
-
-# Logs конкретного agent run
-curl http://localhost:8000/api/agent-runs/1/logs | jq .
-```
-
----
-
-## Зміна LLM моделі
-
-Відредагуйте `.env`:
-
-```bash
-# Ollama (локальна модель)
+```env
+# Ollama (local)
 LLM_PROVIDER=ollama
 LLM_MODEL=llama3.1:8b
 LLM_BASE_URL=http://host.docker.internal:11434
@@ -291,96 +158,175 @@ LLM_MODEL=gpt-4o
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_API_KEY=sk-...
 
-# OpenAI-compatible (LM Studio, LocalAI, etc.)
+# Any OpenAI-compatible provider (LM Studio, LocalAI, etc.)
 LLM_PROVIDER=openai
 LLM_MODEL=local-model
 LLM_BASE_URL=http://host.docker.internal:1234/v1
 LLM_API_KEY=lm-studio
 ```
 
-Перезапустіть: `docker compose restart backend worker`
-
----
-
-## Перевірка LLM
-
 ```bash
-# Через API
-curl http://localhost:8000/api/health/llm | jq .
-
-# Напряму до Ollama
-curl http://localhost:11434/api/tags
+docker compose restart backend worker
 ```
 
 ---
 
-## Linux: host.docker.internal
+## Adding a new agent
 
-На Linux `host.docker.internal` автоматично додається через `extra_hosts: ["host.docker.internal:host-gateway"]` у docker-compose.yml.
+1. Create `backend/app/agents/my_agent.py`:
 
-Перевірте Docker версію (потрібно 20.10+):
-```bash
-docker --version
+```python
+from app.agents.base import BaseITAgent
+from app.tools.my_tool import MyTool
+
+class MyAgent(BaseITAgent):
+    name = "MyAgent"
+    role = "Senior My Role"
+    goal = "What this agent achieves"
+    backstory = "Background that shapes how the LLM behaves"
+    description = "One-line description for the orchestrator"
+    capabilities = ["capability 1", "capability 2"]
+
+    def get_tools(self):
+        return [MyTool()]
 ```
 
-Якщо не працює, можна використати IP хосту напряму:
-```bash
-# Знайдіть IP docker bridge
-ip route | grep docker0
-# або
-docker network inspect bridge | grep Gateway
+2. Register in `backend/app/agents/agent_registry.py`:
 
-# Встановіть в .env
-LLM_BASE_URL=http://172.17.0.1:11434
+```python
+from app.agents.my_agent import MyAgent
+
+AGENT_REGISTRY = {
+    ...
+    "MyAgent": MyAgent(),
+}
 ```
+
+Restart `backend` + `worker` — the orchestrator discovers agents from the registry automatically.
 
 ---
 
-## Структура проєкту
+## Adding a new tool
+
+```python
+from pydantic import BaseModel, Field
+from app.tools.base import LoggedTool
+
+class MyToolInput(BaseModel):
+    query: str = Field(description="What to search for")
+
+class MyTool(LoggedTool):
+    name: str = "MyTool"
+    description: str = "Clear description — the LLM reads this to decide when to use the tool"
+    args_schema: type[BaseModel] = MyToolInput
+
+    def _run(self, query: str) -> str:
+        return f"result for: {query}"
+```
+
+Add it to the relevant agent's `get_tools()` method.
+
+---
+
+## Project structure
 
 ```
 it-company/
 ├── docker-compose.yml
 ├── .env.example
-├── README.md
-├── sample_data/          # Mock data для тестування
-│   ├── logs/
-│   │   ├── service.log
-│   │   └── error.log
-│   ├── support_tickets.json
-│   ├── sample_code.py
-│   ├── backend_error.py
-│   └── docker-compose-sample.yml
 ├── backend/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── alembic.ini
-│   ├── alembic/
-│   │   └── versions/001_initial_schema.py
-│   └── app/
-│       ├── main.py           # FastAPI app
-│       ├── config.py         # Settings з .env
-│       ├── api/              # FastAPI routes
-│       ├── core/
-│       │   ├── llm.py        # LLM factory (Ollama/OpenAI)
-│       │   └── celery_app.py # Celery setup
-│       ├── db/               # SQLAlchemy engine + session
-│       ├── models/           # SQLAlchemy models
-│       ├── schemas/          # Pydantic schemas
-│       ├── agents/           # CrewAI agents
-│       │   ├── base.py
-│       │   ├── agent_registry.py   ← додавай агентів сюди
-│       │   └── *.py          # Конкретні агенти
-│       ├── tools/            # CrewAI tools
-│       ├── orchestrator/
-│       │   └── orchestrator.py  # ChiefOrchestrator (мозок системи)
-│       └── workers/
-│           └── tasks.py      # Celery tasks
+│   ├── app/
+│   │   ├── agents/
+│   │   │   ├── agent_registry.py     # Register agents here
+│   │   │   ├── base.py               # BaseITAgent
+│   │   │   ├── backend_developer.py
+│   │   │   ├── business_analyst.py
+│   │   │   ├── data_analyst.py
+│   │   │   ├── devops.py
+│   │   │   ├── project_manager.py
+│   │   │   ├── qa_engineer.py
+│   │   │   ├── support_engineer.py
+│   │   │   └── runners/
+│   │   │       ├── langgraph_runner.py  # ReAct agent runner (default)
+│   │   │       └── crewai_runner.py     # CrewAI runner (alternative)
+│   │   ├── orchestrator/
+│   │   │   ├── graph.py              # LangGraph orchestration graph
+│   │   │   ├── orchestrator.py       # Core logic (planning, evaluation, synthesis)
+│   │   │   └── base.py
+│   │   ├── tools/
+│   │   │   ├── base.py               # LoggedTool base class
+│   │   │   └── confluence.py         # Confluence read/write/navigate tools
+│   │   ├── models/                   # SQLAlchemy models
+│   │   ├── api/                      # FastAPI routes
+│   │   ├── core/
+│   │   │   ├── llm.py                # LLM factory (Ollama / OpenAI-compatible)
+│   │   │   └── celery_app.py
+│   │   └── workers/tasks.py          # Celery task entry point
+│   └── alembic/                      # DB migrations
 └── frontend/
-    ├── Dockerfile
-    ├── nginx.conf
     └── src/
         ├── App.jsx
-        ├── api/client.js
         └── components/
+            ├── MessageList.jsx       # Markdown rendering (tables, code, etc.)
+            ├── ChatInput.jsx
+            └── Sidebar.jsx
 ```
+
+---
+
+## Database schema
+
+```
+chats
+  └── tasks (Celery task per message)
+        └── agent_runs (one per agent invocation)
+              ├── parent_run_id → orchestrator run
+              ├── input_payload (full task + prior context)
+              ├── output_payload
+              └── worker_logs
+```
+
+Query all activity for a chat:
+```sql
+SELECT ar.agent_name, ar.status, ar.created_at,
+       ar.input_payload->>'task' AS task,
+       ar.output_payload->>'result' AS result
+FROM agent_runs ar
+WHERE ar.chat_id = <chat_id>
+ORDER BY ar.created_at;
+```
+
+---
+
+## Useful commands
+
+```bash
+# View worker logs
+docker compose logs -f worker
+
+# Run migration manually
+docker compose exec backend alembic upgrade head
+
+# Check LLM health
+curl http://localhost:8000/api/health/llm | jq .
+
+# View agent runs via API
+curl http://localhost:8000/api/chats/1/agent-runs | jq .
+
+# Rebuild a single service
+docker compose up -d --build worker
+```
+
+---
+
+## Roadmap
+
+- [x] Multi-agent orchestration with LangGraph
+- [x] Confluence integration (read, write, navigate, move pages)
+- [x] Full agent run history in DB with context
+- [ ] OpenStack integration
+- [ ] Fleio ticket system integration
+- [ ] Jira integration
+- [ ] Analytics module
+- [ ] Streaming responses
+- [ ] Agent run UI timeline
