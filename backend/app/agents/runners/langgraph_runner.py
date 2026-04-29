@@ -1,15 +1,18 @@
+import time
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+import structlog
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.tools import StructuredTool
 
 from app.agents.runners.base import AgentRunner
 from app.agents.agent_registry import AGENT_REGISTRY
 from app.core.llm import get_langchain_llm
 
+logger = structlog.get_logger()
+
 
 def _wrap_crewai_tool(ct: Any) -> StructuredTool:
-    """Convert a CrewAI tool to a LangChain StructuredTool."""
     schema = getattr(ct, "args_schema", None)
 
     def call(**kwargs: Any) -> str:
@@ -21,6 +24,26 @@ def _wrap_crewai_tool(ct: Any) -> StructuredTool:
         description=ct.description,
         args_schema=schema,
     )
+
+
+def _strip_reasoning_hook(state: dict) -> dict:
+    """
+    DeepSeek thinking mode returns `reasoning_content` in AIMessages.
+    When LangGraph passes history back to the API, it strips that field —
+    causing a 400 error. We preemptively remove it before each LLM call.
+    """
+    cleaned = []
+    for msg in state.get("messages", []):
+        if isinstance(msg, AIMessage) and "reasoning_content" in msg.additional_kwargs:
+            kwargs = {k: v for k, v in msg.additional_kwargs.items() if k != "reasoning_content"}
+            msg = AIMessage(
+                content=msg.content,
+                additional_kwargs=kwargs,
+                tool_calls=getattr(msg, "tool_calls", []),
+                id=msg.id,
+            )
+        cleaned.append(msg)
+    return {"messages": cleaned}
 
 
 class LangGraphRunner(AgentRunner):
@@ -44,21 +67,38 @@ class LangGraphRunner(AgentRunner):
             f"Produce output that satisfies: {expected_output}"
         )
 
-        if supports_tools:
-            tools = [_wrap_crewai_tool(t) for t in agent_impl.get_tools()]
-            graph = create_react_agent(llm, tools, prompt=system_prompt)
-        else:
-            # No tool calling — plain chat chain
+        logger.info("agent_start", agent=agent_name, runner="langgraph", tools=supports_tools,
+                    task_preview=task_description[:120])
+        t0 = time.monotonic()
+
+        if not supports_tools:
             from langchain_core.output_parsers import StrOutputParser
             chain = llm | StrOutputParser()
-            return chain.invoke([
+            output = chain.invoke([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=task_description),
             ])
+            elapsed = round(time.monotonic() - t0, 2)
+            logger.info("agent_done", agent=agent_name, runner="langgraph",
+                        elapsed_s=elapsed, output_chars=len(output))
+            return output
+
+        tools = [_wrap_crewai_tool(t) for t in agent_impl.get_tools()]
+        graph = create_react_agent(
+            llm, tools,
+            prompt=system_prompt,
+            pre_model_hook=_strip_reasoning_hook,
+        )
 
         result = graph.invoke({"messages": [HumanMessage(content=task_description)]})
-        messages = result.get("messages", [])
-        for msg in reversed(messages):
-            if hasattr(msg, "content") and msg.content and not getattr(msg, "tool_calls", None):
-                return str(msg.content)
-        return ""
+        elapsed = round(time.monotonic() - t0, 2)
+
+        output = ""
+        for msg in reversed(result.get("messages", [])):
+            if isinstance(msg, AIMessage) and msg.content and not getattr(msg, "tool_calls", None):
+                output = str(msg.content)
+                break
+
+        logger.info("agent_done", agent=agent_name, runner="langgraph",
+                    elapsed_s=elapsed, output_chars=len(output))
+        return output
