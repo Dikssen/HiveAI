@@ -80,5 +80,16 @@ class MyTool(LoggedTool):
 ### `git_serch.py`
 | Tool | Аргументи | Опис |
 |------|-----------|------|
-| `ListRepositoriesTool` | — | Повертає список всіх GitHub репозиторіїв з описами. Викликати першим. |
-| `SearchInRepositoryTool` | `repo_name`, `query` | Шукає код/файли в конкретному репо. Спочатку викликати `ListRepositories`. |
+| `ListRepositoriesTool` | — | Повертає список всіх GitHub репозиторіїв з описами. Використовувати щоб знайти правильну назву репо. |
+
+### `local_repo.py`
+Репозиторії клонуються в `./repos/` і зберігаються між сесіями. Правильний порядок викликів:
+`ListRepositories` → `CloneOrUpdateRepo` → `ListBranches` → `SwitchBranch` → `ListLocalFiles` → `ReadLocalFile`
+
+| Tool | Аргументи | Опис |
+|------|-----------|------|
+| `CloneOrUpdateRepoTool` | `repo_name`, `branch?` | Clone якщо немає локально, pull якщо є. Завжди викликати перед читанням файлів. |
+| `ListBranchesTool` | `repo_name` | Список всіх гілок. Поточна позначена `*`. |
+| `SwitchBranchTool` | `repo_name`, `branch` | Переключитись на іншу гілку. |
+| `ListLocalFilesTool` | `repo_name`, `path?` | Список файлів і папок в репо (або підпапці). |
+| `ReadLocalFileTool` | `repo_name`, `file_path` | Читає вміст файлу з локального репо. |

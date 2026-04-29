@@ -21,9 +21,14 @@ def get_crewai_llm():
             base_url=settings.LLM_BASE_URL,
         )
     else:
-        # OpenAI-compatible endpoint
+        # Force OpenAI-compatible routing in LiteLLM regardless of model name.
+        # Without "openai/" prefix LiteLLM may detect "gemini" or "claude" and
+        # try to load native provider SDKs that are not installed.
+        model = settings.LLM_MODEL
+        if not model.startswith("openai/"):
+            model = f"openai/{model}"
         return LLM(
-            model=settings.LLM_MODEL,
+            model=model,
             base_url=settings.LLM_BASE_URL,
             api_key=settings.LLM_API_KEY or "sk-dummy",
         )

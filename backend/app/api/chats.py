@@ -23,7 +23,21 @@ def create_chat(body: ChatCreate, db: Session = Depends(get_db)):
 
 @router.get("", response_model=list[ChatResponse])
 def list_chats(db: Session = Depends(get_db)):
-    return db.query(Chat).order_by(Chat.created_at.desc()).all()
+    return (
+        db.query(Chat)
+        .filter(Chat.is_hidden == False)
+        .order_by(Chat.created_at.desc())
+        .all()
+    )
+
+
+@router.delete("/{chat_id}", status_code=204)
+def delete_chat(chat_id: int, db: Session = Depends(get_db)):
+    chat = db.query(Chat).filter(Chat.id == chat_id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    chat.is_hidden = True
+    db.commit()
 
 
 @router.get("/{chat_id}", response_model=ChatDetailResponse)

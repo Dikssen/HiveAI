@@ -4,7 +4,13 @@ from app.tools.code_review import CodeReviewTool
 from app.tools.docker_inspect import DockerInspectTool
 from app.tools.report_writer import ReportWriterTool
 from app.tools.git_serch import ListRepositoriesTool
-from app.tools.git_serch import SearchInRepositoryTool
+from app.tools.local_repo import (
+    CloneOrUpdateRepoTool,
+    ListBranchesTool,
+    SwitchBranchTool,
+    ListLocalFilesTool,
+    ReadLocalFileTool,
+)
 
 __all__ = [
     "ReadLogsTool",
@@ -13,5 +19,9 @@ __all__ = [
     "DockerInspectTool",
     "ReportWriterTool",
     "ListRepositoriesTool",
-    "SearchInRepositoryTool",
+    "CloneOrUpdateRepoTool",
+    "ListBranchesTool",
+    "SwitchBranchTool",
+    "ListLocalFilesTool",
+    "ReadLocalFileTool",
 ]

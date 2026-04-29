@@ -81,6 +81,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./sample_data:/app/sample_data:ro
+      - ./repos:/app/repos
 
   flower:
     image: mher/flower:2.0

@@ -1,4 +1,71 @@
-export default function ChatList({ chats, activeChatId, onSelect, onCreate }) {
+import { useState } from "react";
+
+function ChatItem({ chat, isActive, onSelect, onDelete }) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <div
+      onClick={() => onSelect(chat.id)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        padding: "10px 16px",
+        cursor: "pointer",
+        background: isActive ? "#334155" : "transparent",
+        borderLeft: isActive ? "3px solid #3b82f6" : "3px solid transparent",
+        transition: "background 0.15s",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+      }}
+    >
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: isActive ? 600 : 400,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          💬 {chat.title}
+        </div>
+        <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+          {new Date(chat.created_at).toLocaleDateString()}
+        </div>
+      </div>
+
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(chat.id);
+          }}
+          title="Delete chat"
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "#64748b",
+            cursor: "pointer",
+            fontSize: 15,
+            padding: "2px 4px",
+            borderRadius: 4,
+            flexShrink: 0,
+            lineHeight: 1,
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "#ef4444")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "#64748b")}
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  );
+}
+
+export default function ChatList({ chats, activeChatId, onSelect, onCreate, onDelete }) {
   return (
     <div
       style={{
@@ -65,35 +132,13 @@ export default function ChatList({ chats, activeChatId, onSelect, onCreate }) {
           </div>
         )}
         {chats.map((chat) => (
-          <div
+          <ChatItem
             key={chat.id}
-            onClick={() => onSelect(chat.id)}
-            style={{
-              padding: "10px 16px",
-              cursor: "pointer",
-              background: activeChatId === chat.id ? "#334155" : "transparent",
-              borderLeft:
-                activeChatId === chat.id
-                  ? "3px solid #3b82f6"
-                  : "3px solid transparent",
-              transition: "background 0.15s",
-            }}
-          >
-            <div
-              style={{
-                fontSize: 13,
-                fontWeight: activeChatId === chat.id ? 600 : 400,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              💬 {chat.title}
-            </div>
-            <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
-              {new Date(chat.created_at).toLocaleDateString()}
-            </div>
-          </div>
+            chat={chat}
+            isActive={activeChatId === chat.id}
+            onSelect={onSelect}
+            onDelete={onDelete}
+          />
         ))}
       </div>
 

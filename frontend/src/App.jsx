@@ -37,6 +37,12 @@ export default function App() {
     loadChats();
   };
 
+  const handleDeleteChat = async (id) => {
+    await api.deleteChat(id);
+    if (activeChatId === id) setActiveChatId(null);
+    await loadChats();
+  };
+
   return (
     <div
       style={{
@@ -50,6 +56,7 @@ export default function App() {
         activeChatId={activeChatId}
         onSelect={handleSelectChat}
         onCreate={handleCreateChat}
+        onDelete={handleDeleteChat}
       />
 
       {/* Права панель — займає весь залишок висоти */}

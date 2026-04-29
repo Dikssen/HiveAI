@@ -2,7 +2,11 @@ from app.agents.base import BaseITAgent
 from app.tools.read_logs import ReadLogsTool
 from app.tools.code_review import CodeReviewTool
 from app.tools.report_writer import ReportWriterTool
-from app.tools.git_serch import ListRepositoriesTool, SearchInRepositoryTool, ReadRepositoryFileTool
+from app.tools.git_serch import ListRepositoriesTool
+from app.tools.local_repo import (
+    CloneOrUpdateRepoTool, ListBranchesTool, SwitchBranchTool,
+    ListLocalFilesTool, ReadLocalFileTool,
+)
 
 class BackendDeveloperAgent(BaseITAgent):
     name = "BackendDeveloperAgent"
@@ -16,7 +20,7 @@ class BackendDeveloperAgent(BaseITAgent):
         "databases, and distributed systems. You read logs like a book, "
         "spot bugs quickly, and always explain the root cause before proposing a fix."
     )
-    description = "Analyzes backend errors, reads logs, reviews code, proposes fixes."
+    description = "Analyzes backend errors, reads logs, reviews code from GitHub repos, proposes fixes."
     capabilities = [
         "error log analysis",
         "root cause identification",
@@ -25,10 +29,17 @@ class BackendDeveloperAgent(BaseITAgent):
         "backend architecture review",
         "API debugging",
         "list all GitHub repositories",
-        "search code inside a specific GitHub repository",
-        "read file contents from a GitHub repository",
+        "clone or update a GitHub repository locally",
+        "list branches of a repository",
+        "switch between branches",
+        "list files in a local repository",
+        "read file contents from a local repository",
     ]
 
     def get_tools(self):
-        return [ReadLogsTool(), CodeReviewTool(), ReportWriterTool(),
-                ListRepositoriesTool(), SearchInRepositoryTool(), ReadRepositoryFileTool()]
+        return [
+            ReadLogsTool(), CodeReviewTool(), ReportWriterTool(),
+            ListRepositoriesTool(),
+            CloneOrUpdateRepoTool(), ListBranchesTool(), SwitchBranchTool(),
+            ListLocalFilesTool(), ReadLocalFileTool(),
+        ]

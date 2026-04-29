@@ -2,7 +2,11 @@ from app.agents.base import BaseITAgent
 from app.tools.read_logs import ReadLogsTool
 from app.tools.docker_inspect import DockerInspectTool
 from app.tools.report_writer import ReportWriterTool
-from app.tools.git_serch import ListRepositoriesTool, SearchInRepositoryTool
+from app.tools.git_serch import ListRepositoriesTool
+from app.tools.local_repo import (
+    CloneOrUpdateRepoTool, ListBranchesTool, SwitchBranchTool,
+    ListLocalFilesTool, ReadLocalFileTool,
+)
 
 class DevOpsAgent(BaseITAgent):
     name = "DevOpsAgent"
@@ -27,8 +31,17 @@ class DevOpsAgent(BaseITAgent):
         "infrastructure improvement proposals",
         "deployment strategy advice",
         "list all GitHub repositories with descriptions",
-        "search code inside a specific GitHub repository",
+        "clone or update a GitHub repository locally",
+        "list branches of a repository",
+        "switch between branches",
+        "list files in a local repository",
+        "read file contents from a local repository",
     ]
 
     def get_tools(self):
-        return [ReadLogsTool(), DockerInspectTool(), ReportWriterTool(), ListRepositoriesTool(), SearchInRepositoryTool()]
+        return [
+            ReadLogsTool(), DockerInspectTool(), ReportWriterTool(),
+            ListRepositoriesTool(),
+            CloneOrUpdateRepoTool(), ListBranchesTool(), SwitchBranchTool(),
+            ListLocalFilesTool(), ReadLocalFileTool(),
+        ]

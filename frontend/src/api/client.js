@@ -9,6 +9,7 @@ async function request(path, options = {}) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `HTTP ${res.status}`);
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 
@@ -19,6 +20,9 @@ export const api = {
     request("/chats", { method: "POST", body: JSON.stringify({ title }) }),
   getChat: (chatId) => request(`/chats/${chatId}`),
   getMessages: (chatId) => request(`/chats/${chatId}/messages`),
+
+  deleteChat: (chatId) =>
+    request(`/chats/${chatId}`, { method: "DELETE" }).catch(() => {}),
 
   // Send message — returns { message_id, task_id, status }
   sendMessage: (chatId, content) =>
