@@ -10,32 +10,28 @@ from sqlalchemy.orm import Session
 logger = structlog.get_logger()
 
 _INTEGRATION_DEFAULTS = [
-    ("GITHUB_TOKEN",          "GITHUB_TOKEN",          True,  "GitHub personal access token"),
-    ("CONFLUENCE_URL",        "CONFLUENCE_URL",         False, "Confluence base URL, e.g. https://mycompany.atlassian.net/wiki"),
-    ("CONFLUENCE_USER",       "CONFLUENCE_USER",        False, "Confluence login email"),
-    ("CONFLUENCE_API_TOKEN",  "CONFLUENCE_API_TOKEN",   True,  "Confluence API token"),
-    ("CONFLUENCE_SPACE_KEY",  "CONFLUENCE_SPACE_KEY",   False, "Default Confluence space key, e.g. DEV"),
-    ("CONFLUENCE_WRITE_ENABLED", "CONFLUENCE_WRITE_ENABLED", False, "Allow agents to create/edit Confluence pages (true/false)"),
+    ("GITHUB_TOKEN",             None, True,  "GitHub personal access token"),
+    ("CONFLUENCE_URL",           None, False, "Confluence base URL, e.g. https://mycompany.atlassian.net/wiki"),
+    ("CONFLUENCE_USER",          None, False, "Confluence login email"),
+    ("CONFLUENCE_API_TOKEN",     None, True,  "Confluence API token"),
+    ("CONFLUENCE_SPACE_KEY",     None, False, "Default Confluence space key, e.g. DEV"),
+    ("CONFLUENCE_WRITE_ENABLED", None, False, "Allow agents to create/edit Confluence pages (true/false)"),
+    ("JIRA_URL",                 None, False, "Jira base URL, e.g. https://mycompany.atlassian.net"),
+    ("JIRA_USER",                None, False, "Jira login email"),
+    ("JIRA_API_TOKEN",           None, True,  "Jira API token"),
+    ("JIRA_PROJECT_KEY",         None, False, "Default Jira project key, e.g. DEV"),
+    ("JIRA_WRITE_ENABLED",       None, False, "Allow agents to create/update Jira issues (true/false)"),
 ]
 
 
 def seed_integration_configs(db: Session) -> None:
-    from app.config import settings
     from app.models.integration_config import IntegrationConfig
 
-    for key, settings_attr, is_secret, description in _INTEGRATION_DEFAULTS:
+    for key, _unused, is_secret, description in _INTEGRATION_DEFAULTS:
         existing = db.query(IntegrationConfig).filter(IntegrationConfig.key == key).first()
         if existing:
             continue
-        env_value = getattr(settings, settings_attr, None)
-        if isinstance(env_value, bool):
-            env_value = str(env_value).lower()
-        db.add(IntegrationConfig(
-            key=key,
-            value=str(env_value) if env_value is not None else None,
-            is_secret=is_secret,
-            description=description,
-        ))
+        db.add(IntegrationConfig(key=key, value=None, is_secret=is_secret, description=description))
         logger.info("seed_integration_created", key=key)
 
     db.commit()

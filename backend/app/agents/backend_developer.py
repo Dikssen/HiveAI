@@ -12,6 +12,7 @@ from app.tools.code_edit import (
     CodeReplaceRangeTool, CodeReplaceSymbolTool, CodeInsertAtLineTool,
 )
 from app.tools.confluence import get_confluence_tools
+from app.tools.jira import get_jira_tools
 
 class BackendDeveloperAgent(BaseITAgent):
     name = "BackendDeveloperAgent"
@@ -51,4 +52,5 @@ class BackendDeveloperAgent(BaseITAgent):
             CodeReadRangeTool(), CodeReadSymbolTool(),
             CodeReplaceRangeTool(), CodeReplaceSymbolTool(), CodeInsertAtLineTool(),
             *get_confluence_tools(),
+            *get_jira_tools(),
         ]
