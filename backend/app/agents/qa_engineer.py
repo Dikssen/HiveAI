@@ -5,6 +5,7 @@ from app.tools.local_repo import (
     CloneOrUpdateRepoTool, ListBranchesTool, SwitchBranchTool,
     ListLocalFilesTool, ReadLocalFileTool,
 )
+from app.tools.code_edit import CodeReadRangeTool, CodeReadSymbolTool
 
 
 class QAEngineerAgent(BaseITAgent):
@@ -44,4 +45,5 @@ class QAEngineerAgent(BaseITAgent):
             CodeReviewTool(), ReportWriterTool(),
             CloneOrUpdateRepoTool(), ListBranchesTool(), SwitchBranchTool(),
             ListLocalFilesTool(), ReadLocalFileTool(),
+            CodeReadRangeTool(), CodeReadSymbolTool(),
         ]

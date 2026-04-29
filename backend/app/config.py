@@ -17,6 +17,11 @@ class Settings(BaseSettings):
 
     GITHUB_TOKEN: Optional[str] = None
 
+    CONFLUENCE_URL: Optional[str] = None
+    CONFLUENCE_USER: Optional[str] = None
+    CONFLUENCE_API_TOKEN: Optional[str] = None
+    CONFLUENCE_WRITE_ENABLED: bool = False
+
     MAX_ORCHESTRATOR_ITERATIONS: int = 10
 
     # Runner backends: "crewai" | "langgraph"

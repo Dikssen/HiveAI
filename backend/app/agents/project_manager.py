@@ -1,5 +1,6 @@
 from app.agents.base import BaseITAgent
 from app.tools.report_writer import ReportWriterTool
+from app.tools.confluence import get_confluence_tools
 
 
 class ProjectManagerAgent(BaseITAgent):
@@ -29,4 +30,4 @@ class ProjectManagerAgent(BaseITAgent):
     ]
 
     def get_tools(self):
-        return [ReportWriterTool()]
+        return [ReportWriterTool(), *get_confluence_tools()]

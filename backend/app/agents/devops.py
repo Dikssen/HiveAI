@@ -7,6 +7,10 @@ from app.tools.local_repo import (
     CloneOrUpdateRepoTool, ListBranchesTool, SwitchBranchTool,
     ListLocalFilesTool, ReadLocalFileTool, WriteLocalFileTool,
 )
+from app.tools.code_edit import (
+    CodeReadRangeTool, CodeReadSymbolTool,
+    CodeReplaceRangeTool, CodeReplaceSymbolTool, CodeInsertAtLineTool,
+)
 
 class DevOpsAgent(BaseITAgent):
     name = "DevOpsAgent"
@@ -46,4 +50,6 @@ class DevOpsAgent(BaseITAgent):
             ListRepositoriesTool(),
             CloneOrUpdateRepoTool(), ListBranchesTool(), SwitchBranchTool(),
             ListLocalFilesTool(), ReadLocalFileTool(), WriteLocalFileTool(),
+            CodeReadRangeTool(), CodeReadSymbolTool(),
+            CodeReplaceRangeTool(), CodeReplaceSymbolTool(), CodeInsertAtLineTool(),
         ]
