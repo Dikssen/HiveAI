@@ -72,6 +72,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SAMPLE_DATA_PATH=/app/sample_data
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - AGENT_RUNNER=${AGENT_RUNNER:-crewai}
+      - ORCHESTRATOR_RUNNER=${ORCHESTRATOR_RUNNER:-langgraph}
+      - MAX_ORCHESTRATOR_ITERATIONS=${MAX_ORCHESTRATOR_ITERATIONS:-10}
     depends_on:
       postgres:
         condition: service_healthy

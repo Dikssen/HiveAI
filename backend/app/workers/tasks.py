@@ -26,7 +26,7 @@ def run_orchestrator(self, task_id: int, chat_id: int, user_message: str) -> dic
     # Import inside task to avoid circular imports and ensure fresh DB connection
     from app.db.session import SessionLocal
     from app.models.task import Task
-    from app.orchestrator.orchestrator import Orchestrator
+    from app.orchestrator.factory import get_orchestrator
 
     logger.info(
         "Orchestrator task started",
@@ -46,7 +46,7 @@ def run_orchestrator(self, task_id: int, chat_id: int, user_message: str) -> dic
             db_task.status = "running"
             db.commit()
 
-        orchestrator = Orchestrator(db)
+        orchestrator = get_orchestrator(db)
         result = orchestrator.run(chat_id, user_message, task_id)
 
         # Mark task as completed

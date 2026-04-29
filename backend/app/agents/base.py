@@ -37,10 +37,9 @@ class BaseITAgent(ABC):
             backstory=self.backstory,
             tools=tools,
             llm=llm,
-            verbose=True,
+            verbose=False,
             allow_delegation=False,
             max_iter=40,
-
         )
 
     def describe(self) -> str:

@@ -18,16 +18,18 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import structlog
-from crewai import Crew, Task as CrewTask, Process
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.core.llm import get_crewai_llm, get_langchain_llm
+from app.core.llm import get_langchain_llm
 from app.agents.agent_registry import AGENT_REGISTRY, get_agent_descriptions
+from app.agents.runners import get_agent_runner
+from app.agents.runners.base import AgentRunner
 from app.models.message import Message
 from app.models.agent_run import AgentRun
 from app.models.worker_log import WorkerLog
+from app.orchestrator.base import BaseOrchestrator, OrchestratorResult
 
 logger = structlog.get_logger()
 
@@ -156,47 +158,15 @@ Rules:
 
 
 # ---------------------------------------------------------------------------
-# Result container
-# ---------------------------------------------------------------------------
-
-class OrchestratorResult:
-    def __init__(
-        self,
-        reasoning: str,
-        selected_agents: list[str],
-        tasks_created: list[dict],
-        final_answer: str,
-        agent_outputs: list[dict],
-        errors: list[str],
-    ):
-        self.reasoning = reasoning
-        self.selected_agents = selected_agents
-        self.tasks_created = tasks_created
-        self.final_answer = final_answer
-        self.agent_outputs = agent_outputs
-        self.errors = errors
-
-    def to_dict(self) -> dict:
-        return {
-            "reasoning": self.reasoning,
-            "selected_agents": self.selected_agents,
-            "tasks_created": self.tasks_created,
-            "final_answer": self.final_answer,
-            "agent_outputs": self.agent_outputs,
-            "errors": self.errors,
-        }
-
-
-# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
-class Orchestrator:
+class Orchestrator(BaseOrchestrator):
     def __init__(self, db: Session):
         self.db = db
         self._langchain_llm_json: Any = None
         self._langchain_llm_text: Any = None
-        self._crewai_llm: Any = None
+        self._agent_runner: Optional[AgentRunner] = None
 
     def _langchain_json(self):
         if not self._langchain_llm_json:
@@ -208,10 +178,10 @@ class Orchestrator:
             self._langchain_llm_text = get_langchain_llm(json_mode=False)
         return self._langchain_llm_text
 
-    def _crewai(self):
-        if not self._crewai_llm:
-            self._crewai_llm = get_crewai_llm()
-        return self._crewai_llm
+    def _runner(self) -> AgentRunner:
+        if not self._agent_runner:
+            self._agent_runner = get_agent_runner()
+        return self._agent_runner
 
     # ------------------------------------------------------------------
     # DB helpers
@@ -391,7 +361,6 @@ class Orchestrator:
         agent_name: str,
         task_description: str,
         expected_output: str,
-        crewai_llm: Any,
         supports_tools: bool,
         prior_context: str = "",
     ) -> str:
@@ -403,22 +372,7 @@ class Orchestrator:
         else:
             full_description = task_description
 
-        agent_impl = AGENT_REGISTRY[agent_name]
-        crewai_agent = agent_impl.get_crewai_agent(llm=crewai_llm, with_tools=supports_tools)
-        crew_task = CrewTask(
-            description=full_description,
-            expected_output=expected_output,
-            agent=crewai_agent,
-        )
-        crew = Crew(agents=[crewai_agent], tasks=[crew_task], process=Process.sequential, verbose=True)
-        result = crew.kickoff()
-
-        output = ""
-        if hasattr(crew_task, "output") and crew_task.output is not None:
-            out = crew_task.output
-            output = out.raw if hasattr(out, "raw") else str(out)
-        if not output:
-            output = str(result) if result else ""
+        output = self._runner().run(agent_name, full_description, expected_output, supports_tools)
 
         if self._is_unexecuted_action(output):
             logger.warning("Agent returned raw action JSON — tool was not executed", agent=agent_name, raw=output[:200])
@@ -474,7 +428,6 @@ class Orchestrator:
                     "expected_output": "A detailed, helpful response to the user's request",
                 }]
 
-            crewai_llm = self._crewai()
             supports_tools = settings.LLM_SUPPORTS_TOOLS
             max_iter = settings.MAX_ORCHESTRATOR_ITERATIONS
             iteration = 1
@@ -482,8 +435,9 @@ class Orchestrator:
 
             # ── Unified agentic loop ──────────────────────────────────
             while iteration <= max_iter:
-                self._log(orchestrator_run.id, "INFO", f"Agentic loop iteration {iteration}/{max_iter}", {
-                    "agents": [td["agent"] for td in current_tasks],
+                agent_names = [td["agent"] for td in current_tasks]
+                self._log(orchestrator_run.id, "INFO", "loop_iteration", {
+                    "iteration": iteration, "max": max_iter, "agents": agent_names,
                 })
 
                 prior_context = self._build_prior_context(all_outputs)
@@ -503,26 +457,25 @@ class Orchestrator:
                         agent_name=agent_name,
                         task_description=td["description"],
                         expected_output=td.get("expected_output", "A detailed response"),
-                        crewai_llm=crewai_llm,
                         supports_tools=supports_tools,
                         prior_context=prior_context,
                     )
 
-                    self._update_agent_run(ar, "completed", output={"result": output[:8000], "iteration": iteration})
-                    self._log(ar.id, "INFO", f"{agent_name} completed", {"preview": output[:200]})
+                    self._update_agent_run(ar, "completed", output={"result": output, "iteration": iteration})
                     all_outputs.append({"agent": agent_name, "output": output, "iteration": iteration})
                     tasks_created_log.append({"agent": agent_name, "description": td["description"], "status": "completed"})
 
                 # Last iteration — skip evaluation, go straight to synthesis
                 if iteration >= max_iter:
-                    self._log(orchestrator_run.id, "INFO", "Max iterations reached — stopping loop")
+                    self._log(orchestrator_run.id, "INFO", "max_iterations_reached", {"iteration": iteration})
                     break
 
                 # Evaluate: is the work done?
                 evaluation = self._evaluate_result(user_message, all_outputs, orchestrator_run.id)
 
                 if evaluation.get("is_complete", True):
-                    self._log(orchestrator_run.id, "INFO", "Evaluation: complete", {
+                    self._log(orchestrator_run.id, "INFO", "evaluation_complete", {
+                        "iteration": iteration,
                         "reason": evaluation.get("reason", "")[:200],
                     })
                     break
@@ -532,11 +485,13 @@ class Orchestrator:
                 next_task = evaluation.get("next_task", {})
 
                 if not next_agent or next_agent not in AGENT_REGISTRY:
-                    self._log(orchestrator_run.id, "WARNING",
-                        f"Evaluation suggested unknown agent '{next_agent}' — stopping")
+                    self._log(orchestrator_run.id, "WARNING", "evaluation_unknown_agent", {
+                        "next_agent": next_agent,
+                    })
                     break
 
-                self._log(orchestrator_run.id, "INFO", f"Evaluation: calling {next_agent} next", {
+                self._log(orchestrator_run.id, "INFO", "evaluation_continue", {
+                    "next_agent": next_agent,
                     "reason": evaluation.get("reason", "")[:200],
                 })
                 current_tasks = [{"agent": next_agent, **next_task}]
@@ -559,10 +514,10 @@ class Orchestrator:
                 "agents_used": [o["agent"] for o in all_outputs],
                 "final_answer_preview": final_answer[:500],
             })
-            self._log(orchestrator_run.id, "INFO", "Orchestration completed", {
-                "total_iterations": iteration,
+            self._log(orchestrator_run.id, "INFO", "orchestration_done", {
+                "iterations": iteration,
                 "agents": [o["agent"] for o in all_outputs],
-                "final_preview": final_answer[:200],
+                "answer_chars": len(final_answer),
             })
 
             return OrchestratorResult(

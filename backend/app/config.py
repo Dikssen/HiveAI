@@ -19,6 +19,11 @@ class Settings(BaseSettings):
 
     MAX_ORCHESTRATOR_ITERATIONS: int = 10
 
+    # Runner backends: "crewai" | "langgraph"
+    AGENT_RUNNER: str = "crewai"
+    # Orchestrator backend: "custom" | "langgraph"
+    ORCHESTRATOR_RUNNER: str = "custom"
+
     class Config:
         env_file = ".env"
         extra = "ignore"
