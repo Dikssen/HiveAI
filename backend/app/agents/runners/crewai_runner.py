@@ -20,10 +20,10 @@ class CrewAIRunner(AgentRunner):
             self._llm = get_crewai_llm()
         return self._llm
 
-    def run(self, agent_name: str, task_description: str, expected_output: str, supports_tools: bool) -> str:
+    def run(self, agent_name: str, task_description: str, expected_output: str, supports_tools: bool, db=None) -> str:
         llm = self._get_llm()
         agent_impl = AGENT_REGISTRY[agent_name]
-        crewai_agent = agent_impl.get_crewai_agent(llm=llm, with_tools=supports_tools)
+        crewai_agent = agent_impl.get_crewai_agent(llm=llm, with_tools=supports_tools, db=db)
         crew_task = CrewTask(
             description=task_description,
             expected_output=expected_output,

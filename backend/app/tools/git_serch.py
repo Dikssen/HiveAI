@@ -1,6 +1,6 @@
 from app.tools.base import LoggedTool
 from github import Github, Auth
-from app.config import settings
+from app.db.integration_config_helper import get_integration_value
 
 
 class ListRepositoriesTool(LoggedTool):
@@ -11,7 +11,7 @@ class ListRepositoriesTool(LoggedTool):
     )
 
     def _run(self) -> str:
-        auth = Auth.Token(settings.GITHUB_TOKEN)
+        auth = Auth.Token(get_integration_value("GITHUB_TOKEN"))
         git = Github(auth=auth)
 
         repos = git.get_user().get_repos()
