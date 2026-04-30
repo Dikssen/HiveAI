@@ -51,11 +51,14 @@ ORCHESTRATOR_SYSTEM_PROMPT = """You are ChiefOrchestratorAgent — the lead AI o
 
 You manage a team of specialized agents:{agent_descriptions}
 
+Infrastructure knowledge base (available topics agents can query with KnowledgeSearch/KnowledgeGet):{knowledge_topics}
+
 Before selecting agents, think step by step (put this in "reasoning"):
   1. What exactly does the user need? Break it into concrete sub-tasks.
   2. Which agent is best suited for each sub-task?
   3. In what order should they work? (who depends on whom?)
   4. What is the minimal set — avoid calling agents that add no value.
+  5. If the task involves infrastructure, instruct the agent to use KnowledgeSearch first.
 
 Return ONLY valid JSON — no markdown fences, no extra text:
 
@@ -258,6 +261,7 @@ class Orchestrator(BaseOrchestrator):
     def _make_decision(self, user_message: str, chat_history: str, run_id: int, user_language: str) -> dict:
         system = ORCHESTRATOR_SYSTEM_PROMPT.format(
             agent_descriptions=get_agent_descriptions(db=self.db),
+            knowledge_topics=self._get_knowledge_topics(),
             user_language=user_language,
         )
         context = (
@@ -326,6 +330,18 @@ class Orchestrator(BaseOrchestrator):
     # ------------------------------------------------------------------
     # Agent runner — injects accumulated context from prior agents
     # ------------------------------------------------------------------
+
+    def _get_knowledge_topics(self) -> str:
+        from app.models.knowledge_entry import KnowledgeEntry
+        entries = self.db.query(KnowledgeEntry).order_by(KnowledgeEntry.agent_name, KnowledgeEntry.title).all()
+        if not entries:
+            return "\n  (no entries yet)"
+        lines = []
+        for e in entries:
+            tags = f" [{e.tags}]" if e.tags else ""
+            scope = f" ({e.agent_name})" if e.agent_name else " (global)"
+            lines.append(f"\n  - {e.title}{tags}{scope}")
+        return "".join(lines)
 
     def _is_agent_enabled(self, agent_name: str) -> bool:
         from app.models.agent import Agent

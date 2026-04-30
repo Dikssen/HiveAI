@@ -1,3 +1,4 @@
+from app.tools.knowledge import get_knowledge_tools
 from app.agents.base import BaseITAgent
 from app.tools.report_writer import ReportWriterTool
 from app.tools.confluence import get_confluence_tools
@@ -31,4 +32,4 @@ class ProjectManagerAgent(BaseITAgent):
     ]
 
     def get_tools(self):
-        return [ReportWriterTool(), *get_confluence_tools(), *get_jira_tools()]
+        return [ReportWriterTool(), *get_confluence_tools(), *get_jira_tools(), *get_knowledge_tools(agent_name=self.name)]

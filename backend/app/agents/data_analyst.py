@@ -1,5 +1,6 @@
+from app.tools.knowledge import get_knowledge_tools
 from app.agents.base import BaseITAgent
-from app.tools.support_analytics import SupportAnalyticsTool
+from app.tools.fleio_support import get_fleio_support_tools
 from app.tools.report_writer import ReportWriterTool
 
 
@@ -32,4 +33,4 @@ class DataAnalystAgent(BaseITAgent):
     ]
 
     def get_tools(self):
-        return [SupportAnalyticsTool(), ReportWriterTool()]
+        return [*get_fleio_support_tools(), ReportWriterTool(), *get_knowledge_tools(agent_name=self.name)]

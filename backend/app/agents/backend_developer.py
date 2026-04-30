@@ -1,3 +1,4 @@
+from app.tools.knowledge import get_knowledge_tools
 from app.agents.base import BaseITAgent
 from app.tools.read_logs import ReadLogsTool
 from app.tools.code_review import CodeReviewTool
@@ -53,4 +54,5 @@ class BackendDeveloperAgent(BaseITAgent):
             CodeReplaceRangeTool(), CodeReplaceSymbolTool(), CodeInsertAtLineTool(),
             *get_confluence_tools(),
             *get_jira_tools(),
+            *get_knowledge_tools(agent_name=self.name),
         ]

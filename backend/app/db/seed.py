@@ -21,6 +21,11 @@ _INTEGRATION_DEFAULTS = [
     ("JIRA_API_TOKEN",           None, True,  "Jira API token"),
     ("JIRA_PROJECT_KEY",         None, False, "Default Jira project key, e.g. DEV"),
     ("JIRA_WRITE_ENABLED",       None, False, "Allow agents to create/update Jira issues (true/false)"),
+    ("FLEIO_DB_HOST",            None, False, "Fleio MySQL host, e.g. 127.0.0.1"),
+    ("FLEIO_DB_PORT",            None, False, "Fleio MySQL port (default 3306)"),
+    ("FLEIO_DB_USER",            None, False, "Fleio MySQL user"),
+    ("FLEIO_DB_PASSWORD",        None, True,  "Fleio MySQL password"),
+    ("FLEIO_DB_NAME",            None, False, "Fleio MySQL database name, e.g. fleio"),
 ]
 
 
