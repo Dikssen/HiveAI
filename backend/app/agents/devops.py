@@ -1,3 +1,4 @@
+from app.tools.knowledge import get_knowledge_tools
 from app.agents.base import BaseITAgent
 from app.tools.read_logs import ReadLogsTool
 from app.tools.docker_inspect import DockerInspectTool
@@ -51,4 +52,5 @@ class DevOpsAgent(BaseITAgent):
             ListLocalFilesTool(), ReadLocalFileTool(), WriteLocalFileTool(),
             CodeReadRangeTool(), CodeReadSymbolTool(),
             CodeReplaceRangeTool(), CodeReplaceSymbolTool(), CodeInsertAtLineTool(),
+            *get_knowledge_tools(agent_name=self.name),
         ]

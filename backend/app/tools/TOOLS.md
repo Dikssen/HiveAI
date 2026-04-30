@@ -57,11 +57,6 @@ class MyTool(LoggedTool):
 |------|-----------|------|
 | `ReadLogsTool` | `log_type`, `lines` | Читає лог-файли з `sample_data/logs/` |
 
-### `support_analytics.py`
-| Tool | Аргументи | Опис |
-|------|-----------|------|
-| `SupportAnalyticsTool` | `period` | Аналізує тікети з `sample_data/support_tickets.json` |
-
 ### `code_review.py`
 | Tool | Аргументи | Опис |
 |------|-----------|------|
@@ -131,3 +126,40 @@ class MyTool(LoggedTool):
 | `JiraUpdateIssueTool` | `issue_key`, `summary?`, `description?`, `priority?`, `assignee_account_id?` | write* | Оновити поля тікета |
 
 *write — тільки якщо `JIRA_WRITE_ENABLED=true`
+
+---
+
+### `fleio_support.py`
+Пряме підключення до MySQL бази даних Fleio (read-only). Конфігурація через `/api/integrations`: `FLEIO_DB_HOST`, `FLEIO_DB_PORT`, `FLEIO_DB_USER`, `FLEIO_DB_PASSWORD`, `FLEIO_DB_NAME`.
+
+> В Docker: `FLEIO_DB_HOST=host.docker.internal`. MySQL повинен слухати `0.0.0.0`, не `127.0.0.1`.
+
+| Tool | Аргументи | Опис |
+|------|-----------|------|
+| `FleioTicketSummaryTool` | `days?` | Зведена статистика за N днів: кількість тікетів, топ категорії, статуси, середній час відповіді |
+| `FleioListTicketsTool` | `status?`, `client_id?`, `limit?` | Список тікетів з фільтром по статусу або клієнту |
+| `FleioGetTicketTool` | `ticket_id` | Повний тікет: деталі + всі повідомлення |
+| `FleioClientTicketsTool` | `client_id`, `limit?` | Всі тікети конкретного клієнта |
+| `FleioSlaReportTool` | `sla_hours?` | SLA звіт: протерміновані тікети без відповіді, розподіл часу відповіді (<2h, 2-8h, 8-24h, >24h) |
+| `FleioTrendsTool` | `weeks?` | Тренди: тижневий/місячний обсяг, топ ключових слів у заголовках, сервіси що генерують найбільше тікетів, продуктивність співробітників |
+
+---
+
+### `knowledge.py`
+Постійна пам'ять агентів — база знань про інфраструктуру, схеми БД, конфіги, патерни відомих проблем. Кожен агент має свої приватні записи + доступ до глобальних (agent_name IS NULL). Керування через `/api/knowledge`.
+
+Правильний порядок: `KnowledgeSearch` → `KnowledgeGet` → `KnowledgeSave` або `KnowledgeAppend`
+
+| Tool | Аргументи | Тип | Опис |
+|------|-----------|-----|------|
+| `KnowledgeSearchTool` | `query` | read | Пошук по title, tags, content. Повертає до 10 записів з коротким preview |
+| `KnowledgeGetTool` | `title` | read | Читає повний вміст запису за точним заголовком |
+| `KnowledgeSaveTool` | `title`, `content`, `reason`, `tags?`, `scope?` | write | Створює або повністю замінює запис. `scope`: `private` (тільки для себе) або `global` (для всіх агентів). Вимагає обґрунтування `reason` |
+| `KnowledgeAppendTool` | `title`, `content`, `reason` | write | Додає новий блок до існуючого запису з датою. Запис повинен вже існувати |
+
+**Коли писати в knowledge base:**
+- Виявлена нова інфраструктурна деталь (схема БД, конфіг сервера)
+- Знайдений і перевірений workaround для повторюваної проблеми
+- Схема або конфіг, який знадобиться в наступних сесіях
+
+**Не писати:** прогрес поточного завдання, тимчасові висновки, разові знахідки.

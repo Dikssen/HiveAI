@@ -1,3 +1,4 @@
+from app.tools.knowledge import get_knowledge_tools
 from app.agents.base import BaseITAgent
 from app.tools.code_review import CodeReviewTool
 from app.tools.report_writer import ReportWriterTool
@@ -47,5 +48,5 @@ class QAEngineerAgent(BaseITAgent):
             CloneOrUpdateRepoTool(), ListBranchesTool(), SwitchBranchTool(),
             ListLocalFilesTool(), ReadLocalFileTool(),
             CodeReadRangeTool(), CodeReadSymbolTool(),
-            *get_jira_tools(),
+            *get_jira_tools(), *get_knowledge_tools(agent_name=self.name),
         ]
