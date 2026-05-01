@@ -55,13 +55,33 @@ Infrastructure knowledge base (available topics agents can query with KnowledgeS
 
 Before selecting agents, think step by step (put this in "reasoning"):
   1. What exactly does the user need? Break it into concrete sub-tasks.
-  2. Which agent is best suited for each sub-task?
-  3. In what order should they work? (who depends on whom?)
-  4. What is the minimal set — avoid calling agents that add no value.
-  5. If the task involves infrastructure, instruct the agent to use KnowledgeSearch first.
+  2. Can YOU answer this directly, or do agents need to act?
+  3. Which agent is best suited for each sub-task?
+  4. In what order should they work? (who depends on whom?)
+  5. What is the minimal set — avoid calling agents that add no value.
+  6. If the task involves infrastructure, instruct the agent to use KnowledgeSearch first.
 
-Return ONLY valid JSON — no markdown fences, no extra text:
+DIRECT ANSWER (no agents needed) — use when:
+  - Greeting, small talk, or meta-question about the system
+  - General knowledge question that does not require tools, logs, code, or live data
+  - Simple clarification or follow-up that you can answer from the conversation history
 
+AGENT TASKS — use when:
+  - The request requires reading files, logs, repos, Jira, Docker, or any live data
+  - Code needs to be written, reviewed, or analysed
+  - A plan, estimate, or specification needs to be produced
+
+Return ONLY valid JSON — no markdown fences, no extra text.
+
+For a DIRECT ANSWER:
+{{
+  "reasoning": "Why no agents are needed",
+  "selected_agents": [],
+  "tasks": [],
+  "direct_answer": "Your full response to the user in {user_language}"
+}}
+
+For AGENT TASKS:
 {{
   "reasoning": "Step-by-step analysis: what is needed, who does what, and why in this order",
   "selected_agents": ["AgentName1", "AgentName2"],
@@ -70,13 +90,9 @@ Return ONLY valid JSON — no markdown fences, no extra text:
       "agent": "AgentName1",
       "description": "Precise task description — what exactly should this agent do",
       "expected_output": "Concrete description of what this agent must produce"
-    }},
-    {{
-      "agent": "AgentName2",
-      "description": "...",
-      "expected_output": "..."
     }}
-  ]
+  ],
+  "direct_answer": null
 }}
 
 Rules:
@@ -428,6 +444,25 @@ class Orchestrator(BaseOrchestrator):
 
             reasoning = decision.get("reasoning", "")
             task_defs = decision.get("tasks", [])
+            direct_answer = decision.get("direct_answer") or ""
+
+            # Direct answer — no agents needed
+            if direct_answer and not task_defs:
+                self._log(orchestrator_run.id, "INFO", "direct_answer", {"preview": direct_answer[:200]})
+                self.db.add(Message(chat_id=chat_id, role="assistant", content=direct_answer))
+                self.db.commit()
+                self._update_agent_run(orchestrator_run, "completed", output={
+                    "reasoning": reasoning,
+                    "direct_answer_preview": direct_answer[:500],
+                })
+                return OrchestratorResult(
+                    reasoning=reasoning,
+                    selected_agents=[],
+                    tasks_created=[],
+                    final_answer=direct_answer,
+                    agent_outputs=[],
+                    errors=[],
+                )
 
             # Validate agents exist in registry and are enabled in DB
             valid_tasks = []

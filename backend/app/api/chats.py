@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -96,4 +97,64 @@ def get_messages(chat_id: int, db: Session = Depends(get_db)):
         .filter(Message.chat_id == chat_id)
         .order_by(Message.created_at)
         .all()
+    )
+
+
+@router.post("/{chat_id}/messages/stream")
+async def send_message_stream(chat_id: int, body: MessageCreate, db: Session = Depends(get_db)):
+    """
+    Send a message and stream the orchestration progress + final answer via SSE.
+
+    Events:
+      {"type": "step",  "event": "planning"}
+      {"type": "step",  "event": "decision", "agents": [...]}
+      {"type": "step",  "event": "agent_start",    "agent": "...", "iteration": N}
+      {"type": "step",  "event": "agent_complete", "agent": "...", "iteration": N}
+      {"type": "step",  "event": "evaluating"}
+      {"type": "step",  "event": "synthesizing"}
+      {"type": "token", "content": "..."}
+      {"type": "done",  "message_id": N}
+      {"type": "error", "message": "...", "message_id": N}
+    """
+    chat = db.query(Chat).filter(Chat.id == chat_id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    existing_user_messages = (
+        db.query(Message).filter(Message.chat_id == chat_id, Message.role == "user").count()
+    )
+    if existing_user_messages == 0:
+        chat.title = body.content[:80]
+
+    user_msg = Message(chat_id=chat_id, role="user", content=body.content)
+    db.add(user_msg)
+
+    task = Task(chat_id=chat_id, status="running")
+    db.add(task)
+    db.commit()
+    db.refresh(user_msg)
+    db.refresh(task)
+
+    from app.orchestrator.factory import get_streaming_orchestrator
+
+    async def generate():
+        orchestrator = get_streaming_orchestrator(db)
+        completed = False
+        try:
+            async for event in orchestrator.stream(chat_id, body.content, task.id):
+                yield event
+                if '"type": "done"' in event or '"type": "error"' in event:
+                    completed = True
+        finally:
+            task.status = "completed" if completed else "failed"
+            db.commit()
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )

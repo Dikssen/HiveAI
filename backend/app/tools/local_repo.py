@@ -51,8 +51,9 @@ class CloneOrUpdateRepoTool(LoggedTool):
             repo = Repo(path)
             if branch and repo.active_branch.name != branch:
                 repo.git.checkout(branch)
-            repo.remotes.origin.pull()
+            repo.remotes.origin.fetch()
             active = repo.active_branch.name
+            repo.git.reset("--hard", f"origin/{active}")
             return f"Updated '{repo_name}' (branch: {active}) at {path}"
         else:
             url = _get_clone_url(repo_name)
