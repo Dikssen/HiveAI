@@ -16,10 +16,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     SAMPLE_DATA_PATH: str = "./sample_data"
 
-    MAX_ORCHESTRATOR_ITERATIONS: int = 10
+    MAX_ORCHESTRATOR_ITERATIONS: int = 5
+    AGENT_TIMEOUT_SECONDS: int = 300
 
-    # Runner backends: "crewai" | "langgraph"
-    AGENT_RUNNER: str = "crewai"
+    AGENT_RUNNER: str = "langgraph"
     # Orchestrator backend: "custom" | "langgraph"
     ORCHESTRATOR_RUNNER: str = "custom"
 

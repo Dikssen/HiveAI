@@ -23,13 +23,16 @@ _TOOL_ERROR_INSTRUCTION = (
 )
 
 
-def _wrap_crewai_tool(ct: Any) -> StructuredTool:
+def _wrap_tool(ct: Any) -> StructuredTool:
     schema = getattr(ct, "args_schema", None)
     tool_name = getattr(ct, "name", type(ct).__name__)
 
     def call(**kwargs: Any) -> str:
+        logger.info("tool_called", tool=tool_name, kwargs=str(kwargs)[:200])
         try:
-            return ct._run(**kwargs)
+            result = ct._run(**kwargs)
+            logger.info("tool_done", tool=tool_name, result_preview=str(result)[:200])
+            return result
         except Exception as e:
             logger.exception("tool_failed", tool=tool_name, error=str(e))
             return (
@@ -102,7 +105,7 @@ class LangGraphRunner(AgentRunner):
             return output
 
         active_tools = agent_impl.get_active_tools(db) if db is not None else agent_impl.get_tools()
-        tools = [_wrap_crewai_tool(t) for t in active_tools]
+        tools = [_wrap_tool(t) for t in active_tools]
         graph = create_react_agent(llm, tools, prompt=system_prompt)
 
         result = graph.invoke({"messages": [HumanMessage(content=task_description)]})

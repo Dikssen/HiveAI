@@ -72,7 +72,7 @@ services:
       - LLM_ENABLE_THINKING=${LLM_ENABLE_THINKING:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SAMPLE_DATA_PATH=/app/sample_data
-      - AGENT_RUNNER=${AGENT_RUNNER:-crewai}
+      - AGENT_RUNNER=${AGENT_RUNNER:-langgraph}
       - ORCHESTRATOR_RUNNER=${ORCHESTRATOR_RUNNER:-langgraph}
       - MAX_ORCHESTRATOR_ITERATIONS=${MAX_ORCHESTRATOR_ITERATIONS:-10}
     depends_on:

@@ -1,7 +1,7 @@
 """
 Shared LLM module.
 All agents and orchestrator get their LLM from here.
-Supports Ollama (default) and OpenAI-compatible endpoints.
+Supports Ollama, Anthropic, and OpenAI-compatible endpoints.
 """
 import httpx
 import structlog
@@ -9,29 +9,6 @@ import structlog
 from app.config import settings
 
 logger = structlog.get_logger()
-
-
-def get_crewai_llm():
-    """Return a CrewAI LLM instance (uses LiteLLM under the hood)."""
-    from crewai import LLM
-
-    if settings.LLM_PROVIDER == "ollama":
-        return LLM(
-            model=f"ollama/{settings.LLM_MODEL}",
-            base_url=settings.LLM_BASE_URL,
-        )
-    else:
-        # Force OpenAI-compatible routing in LiteLLM regardless of model name.
-        # Without "openai/" prefix LiteLLM may detect "gemini" or "claude" and
-        # try to load native provider SDKs that are not installed.
-        model = settings.LLM_MODEL
-        if not model.startswith("openai/"):
-            model = f"openai/{model}"
-        return LLM(
-            model=model,
-            base_url=settings.LLM_BASE_URL,
-            api_key=settings.LLM_API_KEY or "sk-dummy",
-        )
 
 
 def get_langchain_llm(
@@ -54,17 +31,23 @@ def get_langchain_llm(
             kwargs["format"] = "json"
         return ChatOllama(**kwargs)
 
+    elif settings.LLM_PROVIDER == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+
+        # ChatAnthropic doesn't support response_format — JSON relies on system prompt
+        return ChatAnthropic(
+            model=settings.LLM_MODEL,
+            api_key=settings.LLM_API_KEY,
+        )
+
     else:
         from langchain_openai import ChatOpenAI
 
         merged_extra_body: dict = {}
 
-        # Текущая логика из твоего кода.
-        # Оставляем ее, чтобы не сломать провайдеров, которым нужен enable_thinking.
         if not settings.LLM_ENABLE_THINKING:
             merged_extra_body["enable_thinking"] = False
 
-        # Новая логика: разрешаем вызывающему коду передавать extra_body.
         if extra_body:
             merged_extra_body.update(extra_body)
 
@@ -113,8 +96,16 @@ def check_llm_health() -> dict:
                 "error": f"Ollama returned HTTP {response.status_code}",
                 "message": f"Ollama returned unexpected status {response.status_code}. Is it running?",
             }
+        elif settings.LLM_PROVIDER == "anthropic":
+            response = httpx.get("https://api.anthropic.com", timeout=5.0)
+            return {
+                "status": "ok",
+                "provider": settings.LLM_PROVIDER,
+                "model": settings.LLM_MODEL,
+                "message": "Anthropic endpoint reachable.",
+            }
         else:
-            # For non-Ollama providers just verify the URL is reachable
+            # For other OpenAI-compatible providers just verify the URL is reachable
             response = httpx.get(settings.LLM_BASE_URL, timeout=5.0)
             return {
                 "status": "ok",

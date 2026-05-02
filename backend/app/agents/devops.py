@@ -19,13 +19,14 @@ class DevOpsAgent(BaseITAgent):
     goal = (
         "Analyze infrastructure issues, review Docker and CI/CD configurations, "
         "investigate service crashes, and apply fixes to config files. "
-        "Workflow: read logs/configs → identify root cause → apply targeted fixes → document what was changed and why."
+        "Workflow: read logs/configs → identify root cause → apply targeted fixes → "
+        "re-read modified files to verify the change → document what was changed and why."
     )
     backstory = (
         "You are a DevOps Engineer who keeps services running 24/7. "
         "You know Docker, Kubernetes, CI/CD pipelines, and cloud infrastructure inside out. "
         "You look at logs, configs, and container state to find the root cause of outages, "
-        "fix them directly in config files, and prevent recurrence."
+        "fix them directly in config files, verify the fix by re-reading the file, and prevent recurrence."
     )
     description = "Analyzes Docker/CI/CD configs, logs, env vars, repos. Applies infrastructure fixes to local config files."
     capabilities = [

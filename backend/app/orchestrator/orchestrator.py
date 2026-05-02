@@ -51,77 +51,84 @@ ORCHESTRATOR_SYSTEM_PROMPT = """You are ChiefOrchestratorAgent — the lead AI o
 
 You manage a team of specialized agents:{agent_descriptions}
 
-Infrastructure knowledge base (available topics agents can query with KnowledgeSearch/KnowledgeGet):{knowledge_topics}
+Infrastructure knowledge base (agents can query it with KnowledgeSearch/KnowledgeGet):{knowledge_topics}
 
-Before selecting agents, think step by step (put this in "reasoning"):
-  1. What exactly does the user need? Break it into concrete sub-tasks.
-  2. Can YOU answer this directly, or do agents need to act?
-  3. Which agent is best suited for each sub-task?
-  4. In what order should they work? (who depends on whom?)
-  5. What is the minimal set — avoid calling agents that add no value.
-  6. If the task involves infrastructure, instruct the agent to use KnowledgeSearch first.
+Think step by step before selecting agents (put this in "reasoning"):
+  1. What exactly does the user need? List concrete sub-tasks.
+  2. Can YOU answer directly — no agents needed?
+  3. Which agent is best for each sub-task?
+  4. In what order? Who depends on whom?
+  5. Minimum agents — do not call an agent that adds no value.
 
-DIRECT ANSWER (no agents needed) — use when:
-  - Greeting, small talk, or meta-question about the system
-  - General knowledge question that does not require tools, logs, code, or live data
-  - Simple clarification or follow-up that you can answer from the conversation history
+DIRECT ANSWER (no agents) when:
+  - Greeting, small talk, or a meta-question about the system
+  - General knowledge requiring no tools, logs, code, or live data
+  - Short clarification answerable from conversation history
 
-AGENT TASKS — use when:
-  - The request requires reading files, logs, repos, Jira, Docker, or any live data
-  - Code needs to be written, reviewed, or analysed
-  - A plan, estimate, or specification needs to be produced
+AGENT TASKS when:
+  - Files, logs, repos, Jira, Docker, or live data must be accessed
+  - Code must be written, reviewed, or analyzed
+  - A plan, estimate, or specification must be produced
+
+LANGUAGE RULE: All task `description` fields must be in English.
+If the user language is not English, each task description must end with:
+"Your final response must be in {user_language}."
 
 Return ONLY valid JSON — no markdown fences, no extra text.
 
-For a DIRECT ANSWER:
+Direct answer format:
 {{
   "reasoning": "Why no agents are needed",
-  "selected_agents": [],
   "tasks": [],
-  "direct_answer": "Your full response to the user in {user_language}"
+  "direct_answer": "Full response in {user_language}"
 }}
 
-For AGENT TASKS:
+Agent tasks format:
 {{
-  "reasoning": "Step-by-step analysis: what is needed, who does what, and why in this order",
-  "selected_agents": ["AgentName1", "AgentName2"],
+  "reasoning": "Step-by-step: what is needed, who does what, and why in this order",
   "tasks": [
     {{
-      "agent": "AgentName1",
-      "description": "Precise task description — what exactly should this agent do",
-      "expected_output": "Concrete description of what this agent must produce"
+      "agent": "AgentName",
+      "description": "Precise task in English. Your final response must be in {user_language}.",
+      "expected_output": "What this agent must produce"
     }}
-  ],
-  "direct_answer": null
+  ]
 }}
 
 Rules:
-- Agent names MUST match exactly from the list above
-- All task descriptions MUST be in English
-- Use at most 3-4 agents unless the request truly requires more
-- One agent is fine for simple requests
-- The final answer to the user must be in: {user_language}
+- Each tasks[].agent MUST exactly match a name from the agent list above
+- Prefer the smallest agent set — one agent is correct for simple requests
+- Do not plan the same agent twice consecutively unless one writes code and the next reviews it
 """
 
 EVALUATION_SYSTEM_PROMPT = """You are ChiefOrchestratorAgent reviewing the work done so far.
 
 Available agents:{agent_descriptions}
 
-You receive the original user request and the log of all agent work done so far.
-Decide whether the user's request is fully and correctly addressed.
+Evaluate in this order — stop at the first rule that matches:
 
-Common patterns to watch for:
-- If BackendDeveloperAgent wrote code → QAEngineerAgent should review it (if not done yet)
-- If QAEngineerAgent found bugs → BackendDeveloperAgent should fix them (if not done yet)
-- If the last agent already fixed all issues and QA approved → mark complete
-- If the same agent tried the same thing twice without improvement → mark complete (avoid infinite loops)
+1. AGENT_FAILED — most recent output starts with "[AGENT_FAILED:":
+   → NOT complete. Same agent, new instruction:
+     "The previous attempt failed to execute tools. Do NOT output JSON blobs — run the tools and return actual results."
 
-AGENT FAILURE DETECTION — check for this first:
-- If the output starts with "[AGENT_FAILED:" the agent returned a raw JSON tool call without executing it.
-- Always mark as NOT complete. Set next_agent to the same agent and instruct it:
-  "The previous iteration failed to execute tools. Do NOT output JSON action blobs — actually run the tools and return their results."
+2. AGENT_TIMEOUT — most recent output starts with "[AGENT_TIMEOUT:":
+   → NOT complete. Same agent, new instruction:
+     "The previous attempt timed out. Narrow your approach — fewer tool calls, smaller search scope."
 
-Return ONLY valid JSON — no markdown fences, no extra text:
+3. APPROVED — most recent output starts with "APPROVED:":
+   → COMPLETE. The work is verified.
+
+4. LOOP — same agent has produced substantially similar output twice in a row:
+   → COMPLETE. Break the loop.
+
+5. QUALITY CHECK — does the work genuinely answer the user's request?
+   - Code was written but not yet reviewed → send to a QA/review agent (only once)
+   - A review found issues not yet fixed → send to a developer/fix agent (only once)
+   - After one write→review→fix cycle, mark COMPLETE regardless of remaining minor issues
+   - All issues resolved or no issues found → COMPLETE
+
+Return ONLY valid JSON — no markdown, no extra text.
+If uncertain, return: {{"is_complete": true, "reason": "Unable to evaluate"}}
 
 If complete:
 {{
@@ -135,15 +142,15 @@ If more work is needed:
   "reason": "What is missing or wrong",
   "next_agent": "ExactAgentName",
   "next_task": {{
-    "description": "Precise task in English — reference the prior work explicitly",
+    "description": "Precise task in English — reference prior work explicitly",
     "expected_output": "What the agent must produce"
   }}
 }}
 
 Rules:
-- Only mark complete if the output genuinely answers the user's request
-- Agent name MUST match exactly from the available list
-- Be decisive — do not suggest the same agent twice in a row unless there is a clear new instruction
+- Only mark complete if the output genuinely addresses the user's request
+- next_agent MUST exactly match a name from the available agent list
+- Do NOT repeat the same agent consecutively unless rules 1 or 2 above apply
 """
 
 SYNTHESIS_SYSTEM_PROMPT = """You are ChiefOrchestratorAgent. Your team has finished working on a user request.
@@ -151,11 +158,11 @@ Synthesize all agent outputs into a single clear answer for the user.
 
 Rules:
 - Write in {user_language}
-- Distill the key findings, decisions, and results — do not repeat agents verbatim
-- Include code if it was produced
-- If there were multiple iterations (e.g. Backend + QA reviews), summarize the final approved state
-- Mention any remaining limitations briefly
-- Be concise but complete
+- Distill key findings, decisions, and results — do not repeat agents verbatim
+- Preserve all code blocks exactly as produced — never paraphrase or shorten code
+- If multiple iterations occurred (write → review → fix), present only the final approved state
+- Use markdown where it improves readability: headers, bullet lists, code blocks
+- Briefly mention remaining limitations or open questions at the end if any exist
 """
 
 
@@ -248,7 +255,7 @@ class Orchestrator(BaseOrchestrator):
             .all()
         )
         recent = messages[-10:] if len(messages) > 10 else messages
-        return "\n".join(f"{m.role.upper()}: {m.content}" for m in recent)
+        return "\n".join(f"{m.role.upper()}: {m.content[:500]}" for m in recent)
 
     # ------------------------------------------------------------------
     # JSON parsing
@@ -296,7 +303,7 @@ class Orchestrator(BaseOrchestrator):
         raw = response.content if hasattr(response, "content") else str(response)
         decision = self._parse_json(raw)
         self._log(run_id, "INFO", "Plan ready", {
-            "selected_agents": decision.get("selected_agents", []),
+            "selected_agents": [td["agent"] for td in decision.get("tasks", [])],
             "reasoning": decision.get("reasoning", "")[:300],
         })
         return decision
@@ -309,12 +316,16 @@ class Orchestrator(BaseOrchestrator):
         system = EVALUATION_SYSTEM_PROMPT.format(agent_descriptions=get_agent_descriptions(db=self.db))
         outputs_text = "\n\n".join(
             f"--- Iteration {o['iteration']} | {o['agent']} ---\n{o['output']}"
-            for o in all_outputs
+            for o in all_outputs[-5:]  # limit to last 5 to avoid context overflow
         )
         context = f"User request:\n{user_message}\n\nWork done so far:\n{outputs_text}"
-        response = self._langchain_json().invoke([SystemMessage(content=system), HumanMessage(content=context)])
-        raw = response.content if hasattr(response, "content") else str(response)
-        evaluation = self._parse_json(raw)
+        try:
+            response = self._langchain_json().invoke([SystemMessage(content=system), HumanMessage(content=context)])
+            raw = response.content if hasattr(response, "content") else str(response)
+            evaluation = self._parse_json(raw)
+        except Exception as exc:
+            self._log(run_id, "WARNING", "Evaluation failed — assuming complete", {"error": str(exc)[:300]})
+            evaluation = {"is_complete": True, "reason": f"Evaluation failed: {exc}"}
         self._log(run_id, "INFO", "Evaluation result", {
             "is_complete": evaluation.get("is_complete"),
             "reason": evaluation.get("reason", "")[:200],
@@ -327,9 +338,9 @@ class Orchestrator(BaseOrchestrator):
     # ------------------------------------------------------------------
 
     def _synthesize_answer(self, user_message: str, all_outputs: list[dict], user_language: str, run_id: int) -> str:
-        # Single agent, single iteration — return output directly to save an LLM call
-        if len(all_outputs) == 1 and user_language == "English":
-            self._log(run_id, "INFO", "Synthesis skipped — single agent output in English")
+        # Single agent — agent already responded in the correct language per task instructions
+        if len(all_outputs) == 1:
+            self._log(run_id, "INFO", "Synthesis skipped — single agent output")
             return all_outputs[0]["output"]
 
         system = SYNTHESIS_SYSTEM_PROMPT.format(user_language=user_language)
@@ -359,6 +370,35 @@ class Orchestrator(BaseOrchestrator):
             lines.append(f"\n  - {e.title}{tags}{scope}")
         return "".join(lines)
 
+    def _error_hint(self) -> str:
+        if settings.LLM_PROVIDER == "anthropic":
+            return (
+                f"- Перевірте Anthropic API ключ (LLM_API_KEY)\n"
+                f"- Модель: {settings.LLM_MODEL}"
+            )
+        if settings.LLM_PROVIDER == "ollama":
+            return (
+                f"- Ollama запущена локально (`ollama serve`)\n"
+                f"- Модель завантажена (`ollama pull {settings.LLM_MODEL}`)\n"
+                f"- URL доступний: {settings.LLM_BASE_URL}"
+            )
+        return (
+            f"- LLM endpoint: {settings.LLM_BASE_URL}\n"
+            f"- Модель: {settings.LLM_MODEL}\n"
+            f"- API ключ налаштовано (LLM_API_KEY)"
+        )
+
+    def _inject_language(self, tasks: list[dict], user_language: str) -> list[dict]:
+        """Guarantee every task description ends with a language directive when not English."""
+        if user_language == "English":
+            return tasks
+        suffix = f"\n\nYour final response must be in {user_language}."
+        for td in tasks:
+            desc = td.get("description", "")
+            if f"in {user_language}" not in desc:
+                td["description"] = desc + suffix
+        return tasks
+
     def _is_agent_enabled(self, agent_name: str) -> bool:
         from app.models.agent import Agent
         row = self.db.query(Agent).filter(Agent.name == agent_name).first()
@@ -368,7 +408,7 @@ class Orchestrator(BaseOrchestrator):
         if not all_outputs:
             return ""
         parts = []
-        for o in all_outputs:
+        for o in all_outputs[-3:]:  # pass last 3 complete outputs to avoid context overflow
             parts.append(f"### Iteration {o['iteration']} — {o['agent']}\n{o['output']}")
         return "\n\n".join(parts)
 
@@ -491,6 +531,7 @@ class Orchestrator(BaseOrchestrator):
                 else:
                     raise RuntimeError("No enabled agents available to handle the request")
 
+            self._inject_language(valid_tasks, user_language)
             supports_tools = settings.LLM_SUPPORTS_TOOLS
             max_iter = settings.MAX_ORCHESTRATOR_ITERATIONS
             iteration = 1
@@ -508,11 +549,7 @@ class Orchestrator(BaseOrchestrator):
                 for td in current_tasks:
                     agent_name = td["agent"]
                     task_desc = td["description"]
-                    full_prompt = (
-                        f"## Context from previous work\n\n{prior_context}\n\n"
-                        f"## Your task\n\n{task_desc}"
-                        if prior_context else task_desc
-                    )
+
                     ar = self._create_agent_run(
                         chat_id=chat_id,
                         agent_name=agent_name,
@@ -521,7 +558,6 @@ class Orchestrator(BaseOrchestrator):
                             "iteration": iteration,
                             "task": task_desc,
                             "prior_context": prior_context,
-                            "full_prompt": full_prompt,
                         },
                         task_id=task_id,
                         parent_run_id=orchestrator_run.id,
@@ -571,6 +607,7 @@ class Orchestrator(BaseOrchestrator):
                     "reason": evaluation.get("reason", "")[:200],
                 })
                 current_tasks = [{"agent": next_agent, **next_task}]
+                self._inject_language(current_tasks, user_language)
                 iteration += 1
 
             # ── Synthesize final answer ───────────────────────────────
@@ -617,10 +654,7 @@ class Orchestrator(BaseOrchestrator):
 
             error_reply = (
                 f"❌ Помилка при обробці запиту:\n\n{error_msg}\n\n"
-                "Перевірте:\n"
-                "- Ollama запущена локально (`ollama serve`)\n"
-                f"- Модель завантажена (`ollama pull {settings.LLM_MODEL}`)\n"
-                f"- URL доступний: {settings.LLM_BASE_URL}"
+                f"Перевірте:\n{self._error_hint()}"
             )
             self.db.add(Message(chat_id=chat_id, role="assistant", content=error_reply))
             self.db.commit()

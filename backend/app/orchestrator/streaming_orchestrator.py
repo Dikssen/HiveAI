@@ -49,7 +49,7 @@ class StreamingOrchestrator(Orchestrator):
         supports_tools: bool,
         prior_context: str,
     ) -> str:
-        """Run a synchronous CrewAI agent in a thread pool.
+        """Run a synchronous agent in a thread pool.
 
         Creates its own DB session to avoid SQLAlchemy thread-affinity issues.
         """
@@ -125,7 +125,7 @@ class StreamingOrchestrator(Orchestrator):
             yield _sse({
                 "type": "step",
                 "event": "decision",
-                "agents": decision.get("selected_agents", []),
+                "agents": [td["agent"] for td in task_defs],
             })
 
             # Direct answer — stream it immediately, no agents needed
@@ -167,6 +167,7 @@ class StreamingOrchestrator(Orchestrator):
                 else:
                     raise RuntimeError("No enabled agents available to handle the request")
 
+            self._inject_language(valid_tasks, user_language)
             supports_tools = settings.LLM_SUPPORTS_TOOLS
             max_iter = settings.MAX_ORCHESTRATOR_ITERATIONS
             iteration = 1
@@ -201,13 +202,33 @@ class StreamingOrchestrator(Orchestrator):
                         "iteration": iteration,
                     })
 
-                    output = await self._run_agent_async(
-                        agent_name,
-                        task_desc,
-                        td.get("expected_output", "A detailed response"),
-                        supports_tools,
-                        prior_context,
-                    )
+                    try:
+                        output = await asyncio.wait_for(
+                            self._run_agent_async(
+                                agent_name,
+                                task_desc,
+                                td.get("expected_output", "A detailed response"),
+                                supports_tools,
+                                prior_context,
+                            ),
+                            timeout=settings.AGENT_TIMEOUT_SECONDS,
+                        )
+                    except asyncio.TimeoutError:
+                        output = (
+                            f"[AGENT_TIMEOUT: {agent_name} exceeded "
+                            f"{settings.AGENT_TIMEOUT_SECONDS}s and was aborted.]"
+                        )
+                        logger.error("agent_timeout", agent=agent_name, timeout=settings.AGENT_TIMEOUT_SECONDS)
+                        self._update_agent_run(ar, "failed", error=output)
+                        all_outputs.append({"agent": agent_name, "output": output, "iteration": iteration})
+                        tasks_created_log.append({"agent": agent_name, "description": task_desc, "status": "timeout"})
+                        yield _sse({
+                            "type": "step",
+                            "event": "agent_complete",
+                            "agent": agent_name,
+                            "iteration": iteration,
+                        })
+                        continue
 
                     self._update_agent_run(ar, "completed", output={"result": output, "iteration": iteration})
                     all_outputs.append({"agent": agent_name, "output": output, "iteration": iteration})
@@ -249,14 +270,15 @@ class StreamingOrchestrator(Orchestrator):
                     "reason": evaluation.get("reason", "")[:200],
                 })
                 current_tasks = [{"agent": next_agent, **next_task}]
+                self._inject_language(current_tasks, user_language)
                 iteration += 1
 
             # ── Stream final synthesis ────────────────────────────────────
             yield _sse({"type": "step", "event": "synthesizing"})
             final_answer_parts: list[str] = []
 
-            if len(all_outputs) == 1 and user_language == "English":
-                # Single agent + English: skip synthesis LLM call, yield output directly
+            if len(all_outputs) == 1:
+                # Single agent — already responded in the correct language per task instructions
                 content = all_outputs[0]["output"]
                 final_answer_parts.append(content)
                 yield _sse({"type": "token", "content": content})
@@ -307,10 +329,7 @@ class StreamingOrchestrator(Orchestrator):
 
             error_reply = (
                 f"❌ Помилка при обробці запиту:\n\n{error_msg}\n\n"
-                "Перевірте:\n"
-                "- Ollama запущена локально (`ollama serve`)\n"
-                f"- Модель завантажена (`ollama pull {settings.LLM_MODEL}`)\n"
-                f"- URL доступний: {settings.LLM_BASE_URL}"
+                f"Перевірте:\n{self._error_hint()}"
             )
             msg = Message(chat_id=chat_id, role="assistant", content=error_reply)
             self.db.add(msg)
