@@ -33,6 +33,13 @@ from app.orchestrator.base import BaseOrchestrator, OrchestratorResult
 
 logger = structlog.get_logger()
 
+MAX_AGENT_RETRIES = 2
+_FAILURE_MARKERS = ("[AGENT_FAILED:", "[AGENT_TIMEOUT:")
+_REACT_PATTERN = re.compile(
+    r'^(Thought:|Action:|Action Input:|Observation:)',
+    re.MULTILINE | re.IGNORECASE,
+)
+
 
 def _detect_language(text: str) -> str:
     cyrillic = len(re.findall(r'[а-яА-ЯёЁіІїЇєЄґҐ]', text))
@@ -115,13 +122,19 @@ Evaluate in this order — stop at the first rule that matches:
    → NOT complete. Same agent, new instruction:
      "The previous attempt timed out. Narrow your approach — fewer tool calls, smaller search scope."
 
-3. APPROVED — most recent output starts with "APPROVED:":
+3. INFRASTRUCTURE_ERROR — most recent output contains any of: "[TOOL_ERROR]", "FLEIO_UNREACHABLE",
+   "Connection refused", "Do not retry", "Cannot connect", "service unavailable", "host unreachable":
+   → COMPLETE. This is an external/environmental failure that requires human intervention, not another agent.
+     Do NOT send a DevOps or any other agent — that cannot fix connectivity or credentials from inside the agent.
+     Let synthesis report the problem clearly to the user.
+
+4. APPROVED — most recent output starts with "APPROVED:":
    → COMPLETE. The work is verified.
 
-4. LOOP — same agent has produced substantially similar output twice in a row:
+5. LOOP — same agent has produced substantially similar output twice in a row:
    → COMPLETE. Break the loop.
 
-5. QUALITY CHECK — does the work genuinely answer the user's request?
+6. QUALITY CHECK — does the work genuinely answer the user's request?
    - Code was written but not yet reviewed → send to a QA/review agent (only once)
    - A review found issues not yet fixed → send to a developer/fix agent (only once)
    - After one write→review→fix cycle, mark COMPLETE regardless of remaining minor issues
@@ -338,8 +351,8 @@ class Orchestrator(BaseOrchestrator):
     # ------------------------------------------------------------------
 
     def _synthesize_answer(self, user_message: str, all_outputs: list[dict], user_language: str, run_id: int) -> str:
-        # Single agent — agent already responded in the correct language per task instructions
-        if len(all_outputs) == 1:
+        # Single agent with clean output — skip synthesis, already in correct language
+        if len(all_outputs) == 1 and not all_outputs[0]["output"].startswith(_FAILURE_MARKERS):
             self._log(run_id, "INFO", "Synthesis skipped — single agent output")
             return all_outputs[0]["output"]
 
@@ -385,7 +398,6 @@ class Orchestrator(BaseOrchestrator):
         return (
             f"- LLM endpoint: {settings.LLM_BASE_URL}\n"
             f"- Модель: {settings.LLM_MODEL}\n"
-            f"- API ключ налаштовано (LLM_API_KEY)"
         )
 
     def _inject_language(self, tasks: list[dict], user_language: str) -> list[dict]:
@@ -413,21 +425,21 @@ class Orchestrator(BaseOrchestrator):
         return "\n\n".join(parts)
 
     def _is_unexecuted_action(self, output: str) -> bool:
-        """
-        Detect when the LLM returned a raw ReAct action blob instead of actual results.
-        DeepSeek sometimes outputs {"Thought": ..., "Action": ..., "Action Input": ...}
-        as its final answer without executing the tool.
-        """
         text = output.strip().lstrip("`").strip()
         if text.startswith("json"):
             text = text[4:].strip()
+        # JSON blob with action/thought keys (DeepSeek / some Qwen variants)
         try:
             parsed = json.loads(text)
             if isinstance(parsed, dict):
                 keys = {k.lower() for k in parsed.keys()}
-                return bool(keys & {"action", "thought", "action_input"})
+                if keys & {"action", "thought", "action_input"}:
+                    return True
         except (json.JSONDecodeError, ValueError):
             pass
+        # Plain-text ReAct pattern — 2+ markers required to avoid false positives
+        if len(_REACT_PATTERN.findall(output)) >= 2:
+            return True
         return False
 
     def _run_single_agent(
@@ -466,7 +478,8 @@ class Orchestrator(BaseOrchestrator):
         errors: list[str] = []
         all_outputs: list[dict] = []          # {"agent", "output", "iteration"}
         tasks_created_log: list[dict] = []
-        active_runs: dict[str, AgentRun] = {}
+        active_runs: list[AgentRun] = []
+        retry_counts: dict[str, int] = {}
 
         orchestrator_run = self._create_agent_run(
             chat_id=chat_id,
@@ -562,7 +575,7 @@ class Orchestrator(BaseOrchestrator):
                         task_id=task_id,
                         parent_run_id=orchestrator_run.id,
                     )
-                    active_runs[agent_name] = ar
+                    active_runs.append(ar)
                     self._update_agent_run(ar, "running")
 
                     output = self._run_single_agent(
@@ -573,9 +586,18 @@ class Orchestrator(BaseOrchestrator):
                         prior_context=prior_context,
                     )
 
+                    if output.startswith(_FAILURE_MARKERS):
+                        retry_counts[agent_name] = retry_counts.get(agent_name, 0) + 1
+
                     self._update_agent_run(ar, "completed", output={"result": output, "iteration": iteration})
                     all_outputs.append({"agent": agent_name, "output": output, "iteration": iteration})
                     tasks_created_log.append({"agent": agent_name, "description": td["description"], "status": "completed"})
+
+                # Abort if any agent exhausted retries
+                maxed = [a for a, c in retry_counts.items() if c >= MAX_AGENT_RETRIES]
+                if maxed:
+                    self._log(orchestrator_run.id, "WARNING", "agent_max_retries_reached", {"agents": maxed})
+                    break
 
                 # Last iteration — skip evaluation, go straight to synthesis
                 if iteration >= max_iter:
@@ -648,7 +670,7 @@ class Orchestrator(BaseOrchestrator):
             errors.append(error_msg)
 
             self._update_agent_run(orchestrator_run, "failed", error=error_msg)
-            for ar in active_runs.values():
+            for ar in active_runs:
                 if ar.status == "running":
                     self._update_agent_run(ar, "failed", error=error_msg)
 

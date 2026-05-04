@@ -31,6 +31,8 @@ from app.orchestrator.orchestrator import (
     Orchestrator,
     _detect_language,
     SYNTHESIS_SYSTEM_PROMPT,
+    _FAILURE_MARKERS,
+    MAX_AGENT_RETRIES,
 )
 
 logger = structlog.get_logger()
@@ -93,7 +95,8 @@ class StreamingOrchestrator(Orchestrator):
         errors: list[str] = []
         all_outputs: list[dict] = []
         tasks_created_log: list[dict] = []
-        active_runs: dict = {}
+        active_runs: list = []
+        retry_counts: dict[str, int] = {}
 
         orchestrator_run = self._create_agent_run(
             chat_id=chat_id,
@@ -192,7 +195,7 @@ class StreamingOrchestrator(Orchestrator):
                         task_id=task_id,
                         parent_run_id=orchestrator_run.id,
                     )
-                    active_runs[agent_name] = ar
+                    active_runs.append(ar)
                     self._update_agent_run(ar, "running")
 
                     yield _sse({
@@ -230,6 +233,9 @@ class StreamingOrchestrator(Orchestrator):
                         })
                         continue
 
+                    if output.startswith(_FAILURE_MARKERS):
+                        retry_counts[agent_name] = retry_counts.get(agent_name, 0) + 1
+
                     self._update_agent_run(ar, "completed", output={"result": output, "iteration": iteration})
                     all_outputs.append({"agent": agent_name, "output": output, "iteration": iteration})
                     tasks_created_log.append({"agent": agent_name, "description": task_desc, "status": "completed"})
@@ -240,6 +246,12 @@ class StreamingOrchestrator(Orchestrator):
                         "agent": agent_name,
                         "iteration": iteration,
                     })
+
+                # Abort if any agent exhausted retries
+                maxed = [a for a, c in retry_counts.items() if c >= MAX_AGENT_RETRIES]
+                if maxed:
+                    self._log(orchestrator_run.id, "WARNING", "agent_max_retries_reached", {"agents": maxed})
+                    break
 
                 if iteration >= max_iter:
                     self._log(orchestrator_run.id, "INFO", "max_iterations_reached", {"iteration": iteration})
@@ -277,8 +289,8 @@ class StreamingOrchestrator(Orchestrator):
             yield _sse({"type": "step", "event": "synthesizing"})
             final_answer_parts: list[str] = []
 
-            if len(all_outputs) == 1:
-                # Single agent — already responded in the correct language per task instructions
+            if len(all_outputs) == 1 and not all_outputs[0]["output"].startswith(_FAILURE_MARKERS):
+                # Single agent with clean output — skip synthesis, already in correct language
                 content = all_outputs[0]["output"]
                 final_answer_parts.append(content)
                 yield _sse({"type": "token", "content": content})
@@ -323,7 +335,7 @@ class StreamingOrchestrator(Orchestrator):
             logger.error(error_msg, exc_info=True)
 
             self._update_agent_run(orchestrator_run, "failed", error=error_msg)
-            for ar in active_runs.values():
+            for ar in active_runs:
                 if ar.status == "running":
                     self._update_agent_run(ar, "failed", error=error_msg)
 
