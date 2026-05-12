@@ -89,6 +89,20 @@ def send_message(chat_id: int, body: MessageCreate, db: Session = Depends(get_db
     )
 
 
+@router.get("/{chat_id}/active-task")
+def get_active_task(chat_id: int, db: Session = Depends(get_db)):
+    """Return the active (pending/running) task for a chat, or null if none."""
+    task = (
+        db.query(Task)
+        .filter(Task.chat_id == chat_id, Task.status.in_(["pending", "running"]))
+        .order_by(Task.created_at.desc())
+        .first()
+    )
+    if not task:
+        return None
+    return {"task_id": task.id, "status": task.status}
+
+
 @router.get("/{chat_id}/messages", response_model=list[MessageResponse])
 def get_messages(chat_id: int, db: Session = Depends(get_db)):
     return (
@@ -97,3 +111,5 @@ def get_messages(chat_id: int, db: Session = Depends(get_db)):
         .order_by(Message.created_at)
         .all()
     )
+
+

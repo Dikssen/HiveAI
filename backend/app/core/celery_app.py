@@ -2,6 +2,8 @@ import json
 from celery import Celery
 from kombu.serialization import register
 from app.config import settings
+from app.utils.logging import configure_logging
+configure_logging()
 
 register(
     "json_unicode",

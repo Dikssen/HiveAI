@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
+from sqlalchemy import Column, Integer, String, Boolean, Float, DateTime, func
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -12,6 +12,7 @@ class Agent(Base):
     role = Column(String(200), nullable=False)
     description = Column(String(500), nullable=True)
     is_enabled = Column(Boolean, nullable=False, default=True)
+    temperature = Column(Float, nullable=False, default=0.7)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     tool_configs = relationship("AgentToolConfig", back_populates="agent", cascade="all, delete-orphan")

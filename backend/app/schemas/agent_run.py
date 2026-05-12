@@ -19,6 +19,7 @@ class WorkerLogResponse(BaseModel):
 class AgentRunResponse(BaseModel):
     id: int
     chat_id: int
+    task_id: Optional[int] = None
     agent_name: str
     task_description: Optional[str]
     status: str

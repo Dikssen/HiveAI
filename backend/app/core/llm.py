@@ -1,42 +1,59 @@
 """
 Shared LLM module.
 All agents and orchestrator get their LLM from here.
-Supports Ollama (default) and OpenAI-compatible endpoints.
+Supports Ollama, Anthropic, and OpenAI-compatible endpoints.
 """
 import httpx
 import structlog
+from typing import Any
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.outputs import LLMResult
 
 from app.config import settings
 
 logger = structlog.get_logger()
 
 
-def get_crewai_llm():
-    """Return a CrewAI LLM instance (uses LiteLLM under the hood)."""
-    from crewai import LLM
+class _LLMLogger(BaseCallbackHandler):
+    """Logs every request/response that goes to the LLM."""
 
-    if settings.LLM_PROVIDER == "ollama":
-        return LLM(
-            model=f"ollama/{settings.LLM_MODEL}",
-            base_url=settings.LLM_BASE_URL,
-        )
-    else:
-        # Force OpenAI-compatible routing in LiteLLM regardless of model name.
-        # Without "openai/" prefix LiteLLM may detect "gemini" or "claude" and
-        # try to load native provider SDKs that are not installed.
-        model = settings.LLM_MODEL
-        if not model.startswith("openai/"):
-            model = f"openai/{model}"
-        return LLM(
-            model=model,
-            base_url=settings.LLM_BASE_URL,
-            api_key=settings.LLM_API_KEY or "sk-dummy",
-        )
+    def on_chat_model_start(self, serialized: dict, messages: list, **kwargs: Any) -> None:
+        for msg_list in messages:
+            parts = []
+            for msg in msg_list:
+                role = getattr(msg, "type", "?")
+                content = str(msg.content)
+                parts.append({"role": role, "chars": len(content), "content": content})
+            logger.info(
+                "llm_request",
+                model=serialized.get("kwargs", {}).get("model_name", settings.LLM_MODEL),
+                messages=parts,
+            )
+
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        for gen_list in response.generations:
+            for gen in gen_list:
+                text = getattr(gen, "text", None) or str(getattr(gen, "message", gen))
+                llm_output = getattr(response, "llm_output", {}) or {}
+                usage = llm_output.get("token_usage") or llm_output.get("usage")
+                logger.info(
+                    "llm_response",
+                    chars=len(text),
+                    content=text,
+                    token_usage=usage,
+                )
+
+    def on_llm_error(self, error: Exception, **kwargs: Any) -> None:
+        logger.error("llm_error", error=str(error))
+
+
+_llm_logger = _LLMLogger()
 
 
 def get_langchain_llm(
     json_mode: bool = False,
     extra_body: dict | None = None,
+    temperature: float = 0.7,
 ):
     """
     Return a LangChain chat model for direct LLM calls (orchestrator decision).
@@ -49,22 +66,32 @@ def get_langchain_llm(
         kwargs: dict = {
             "model": settings.LLM_MODEL,
             "base_url": settings.LLM_BASE_URL,
+            "temperature": temperature,
+            "callbacks": [_llm_logger],
         }
         if json_mode:
             kwargs["format"] = "json"
         return ChatOllama(**kwargs)
+
+    elif settings.LLM_PROVIDER == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+
+        # ChatAnthropic doesn't support response_format — JSON relies on system prompt
+        return ChatAnthropic(
+            model=settings.LLM_MODEL,
+            api_key=settings.LLM_API_KEY,
+            temperature=temperature,
+            callbacks=[_llm_logger],
+        )
 
     else:
         from langchain_openai import ChatOpenAI
 
         merged_extra_body: dict = {}
 
-        # Текущая логика из твоего кода.
-        # Оставляем ее, чтобы не сломать провайдеров, которым нужен enable_thinking.
         if not settings.LLM_ENABLE_THINKING:
             merged_extra_body["enable_thinking"] = False
 
-        # Новая логика: разрешаем вызывающему коду передавать extra_body.
         if extra_body:
             merged_extra_body.update(extra_body)
 
@@ -72,7 +99,9 @@ def get_langchain_llm(
             "model": settings.LLM_MODEL,
             "base_url": settings.LLM_BASE_URL,
             "api_key": settings.LLM_API_KEY or "sk-dummy",
+            "temperature": temperature,
             "extra_body": merged_extra_body or None,
+            "callbacks": [_llm_logger],
         }
 
         if json_mode:
@@ -113,8 +142,16 @@ def check_llm_health() -> dict:
                 "error": f"Ollama returned HTTP {response.status_code}",
                 "message": f"Ollama returned unexpected status {response.status_code}. Is it running?",
             }
+        elif settings.LLM_PROVIDER == "anthropic":
+            response = httpx.get("https://api.anthropic.com", timeout=5.0)
+            return {
+                "status": "ok",
+                "provider": settings.LLM_PROVIDER,
+                "model": settings.LLM_MODEL,
+                "message": "Anthropic endpoint reachable.",
+            }
         else:
-            # For non-Ollama providers just verify the URL is reachable
+            # For other OpenAI-compatible providers just verify the URL is reachable
             response = httpx.get(settings.LLM_BASE_URL, timeout=5.0)
             return {
                 "status": "ok",

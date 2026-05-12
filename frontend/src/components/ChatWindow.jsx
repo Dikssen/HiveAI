@@ -7,8 +7,7 @@ import StatusBadge from "./StatusBadge";
 
 export default function ChatWindow({ chatId, onViewRun }) {
   const [messages, setMessages] = useState([]);
-  const [pendingTaskId, setPendingTaskId] = useState(null);
-  const [taskStatus, setTaskStatus] = useState(null);
+  const [resumeTaskId, setResumeTaskId] = useState(null);
   const [timelineKey, setTimelineKey] = useState(0);
   const [showTimeline, setShowTimeline] = useState(true);
   const [agentRuns, setAgentRuns] = useState([]);
@@ -25,48 +24,54 @@ export default function ChatWindow({ chatId, onViewRun }) {
     }
   }, [chatId]);
 
+  // Polling fallback — kicks in when the user returns to a chat mid-processing
   useEffect(() => {
-    setMessages([]);
-    setPendingTaskId(null);
-    setTaskStatus(null);
-    setError(null);
-    setAgentRuns([]);
-    if (chatId) {
-      loadMessages();
-      api.getAgentRuns(chatId).then(setAgentRuns).catch(() => {});
-    }
-  }, [chatId]);
-
-  useEffect(() => {
-    if (!pendingTaskId) {
+    if (!resumeTaskId) {
       clearInterval(pollRef.current);
       return;
     }
     const poll = async () => {
       try {
-        const task = await api.getTask(pendingTaskId);
-        setTaskStatus(task.status);
-        setTimelineKey((k) => k + 1);
+        const task = await api.getTask(resumeTaskId);
         if (task.status === "completed" || task.status === "failed") {
           clearInterval(pollRef.current);
-          setPendingTaskId(null);
+          setResumeTaskId(null);
           await loadMessages();
           setTimelineKey((k) => k + 1);
-          // refresh agent runs to update "last run" button
-          const runs = await api.getAgentRuns(chatId).catch(() => []);
-          setAgentRuns(runs);
+          api.getAgentRuns(chatId).then(setAgentRuns).catch(() => {});
         }
-      } catch {
-        // backend restarting — keep polling
-      }
+      } catch {}
     };
     poll();
     pollRef.current = setInterval(poll, 2500);
     return () => clearInterval(pollRef.current);
-  }, [pendingTaskId, loadMessages]);
+  }, [resumeTaskId, loadMessages, chatId]);
+
+  // On chat switch: check for in-progress tasks to resume via polling
+  useEffect(() => {
+    clearInterval(pollRef.current);
+    setMessages([]);
+    setResumeTaskId(null);
+    setError(null);
+    setAgentRuns([]);
+
+    if (!chatId) return;
+
+    loadMessages();
+    // Check for an active task first — more reliable than scanning agent runs
+    api.getActiveTask(chatId).then((active) => {
+      if (active?.task_id) setResumeTaskId(active.task_id);
+    });
+    api.getAgentRuns(chatId).then(setAgentRuns).catch(() => {});
+
+    return () => clearInterval(pollRef.current);
+  }, [chatId]);
 
   const handleSend = async (content) => {
+    clearInterval(pollRef.current);
     setError(null);
+    setResumeTaskId(null);
+
     const tempMsg = {
       id: Date.now(),
       chat_id: chatId,
@@ -75,18 +80,17 @@ export default function ChatWindow({ chatId, onViewRun }) {
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, tempMsg]);
+
     try {
-      const result = await api.sendMessage(chatId, content);
-      setPendingTaskId(result.task_id);
-      setTaskStatus("pending");
-      await loadMessages();
+      const { task_id } = await api.sendMessage(chatId, content);
+      setResumeTaskId(task_id);
     } catch (e) {
       setError(e.message);
       setMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
     }
   };
 
-  const isProcessing = taskStatus === "pending" || taskStatus === "running";
+  const isProcessing = !!resumeTaskId;
 
   if (!chatId) {
     return (
@@ -108,17 +112,16 @@ export default function ChatWindow({ chatId, onViewRun }) {
   }
 
   return (
-    // Outer wrapper: takes all remaining height from App, nothing overflows out
     <div
       style={{
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        minHeight: 0, // ← дозволяє flex-дітям мати scroll замість розтягування
+        minHeight: 0,
         overflow: "hidden",
       }}
     >
-      {/* Toolbar — фіксована висота */}
+      {/* Toolbar */}
       <div
         style={{
           padding: "10px 16px",
@@ -133,9 +136,8 @@ export default function ChatWindow({ chatId, onViewRun }) {
         <span style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>
           Chat #{chatId}
         </span>
-        {taskStatus && <StatusBadge status={taskStatus} />}
+        {isProcessing && <StatusBadge status="running" />}
 
-        {/* Last run button — visible as soon as there are runs */}
         {(() => {
           const lastOrch = [...agentRuns].reverse().find(r => r.agent_name === "ChiefOrchestratorAgent");
           return lastOrch ? (
@@ -189,17 +191,17 @@ export default function ChatWindow({ chatId, onViewRun }) {
         </div>
       )}
 
-      {/* Messages — займає весь вільний простір, прокручується */}
-      <MessageList messages={messages} isProcessing={isProcessing} />
+      <MessageList
+        messages={messages}
+        isProcessing={isProcessing}
+      />
 
-      {/* Agent timeline — фіксована знизу, власний скрол якщо потрібно */}
       {showTimeline && (
         <div style={{ flexShrink: 0, maxHeight: "35vh", overflowY: "auto" }}>
           <AgentRunTimeline chatId={chatId} refreshKey={timelineKey} onViewRun={onViewRun} />
         </div>
       )}
 
-      {/* Input — фіксована знизу */}
       <div style={{ flexShrink: 0 }}>
         <MessageInput onSend={handleSend} disabled={isProcessing} />
       </div>

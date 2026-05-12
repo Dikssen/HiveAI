@@ -3,13 +3,11 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 const mdComponents = {
-  // Keep links safe (open in new tab)
   a: ({ href, children }) => (
     <a href={href} target="_blank" rel="noreferrer" style={{ color: "#3b82f6" }}>
       {children}
     </a>
   ),
-  // Style code blocks
   code: ({ inline, children }) =>
     inline ? (
       <code
@@ -40,7 +38,6 @@ const mdComponents = {
         <code>{children}</code>
       </pre>
     ),
-  // Tighten up heading sizes inside a chat bubble
   h1: ({ children }) => <div style={{ fontWeight: 700, fontSize: 15, margin: "8px 0 4px" }}>{children}</div>,
   h2: ({ children }) => <div style={{ fontWeight: 700, fontSize: 14, margin: "6px 0 3px" }}>{children}</div>,
   h3: ({ children }) => <div style={{ fontWeight: 600, fontSize: 13, margin: "5px 0 2px" }}>{children}</div>,
@@ -114,10 +111,8 @@ function Message({ msg }) {
         }}
       >
         {isUser ? (
-          // User messages: plain text
           <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
         ) : (
-          // Agent/assistant messages: render markdown
           <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{msg.content}</Markdown>
         )}
 
@@ -157,6 +152,26 @@ function Message({ msg }) {
   );
 }
 
+function ProcessingMessage() {
+  return (
+    <>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .step-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #d1d5db; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 7px; vertical-align: middle; }
+      `}</style>
+      <div style={{ display: "flex", marginBottom: 12, alignItems: "flex-start" }}>
+        <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#3b82f6", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, marginRight: 8, flexShrink: 0, marginTop: 2 }}>
+          🤖
+        </div>
+        <div style={{ padding: "10px 14px", borderRadius: "18px 18px 18px 4px", background: "#f3f4f6", color: "#6b7280", fontSize: 14 }}>
+          <span className="step-spinner" />
+          Агенти працюють...
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function MessageList({ messages, isProcessing }) {
   const bottomRef = useRef(null);
 
@@ -166,7 +181,7 @@ export default function MessageList({ messages, isProcessing }) {
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
-      {messages.length === 0 && (
+      {messages.length === 0 && !isProcessing && (
         <div
           style={{
             textAlign: "center",
@@ -187,37 +202,7 @@ export default function MessageList({ messages, isProcessing }) {
         <Message key={msg.id} msg={msg} />
       ))}
 
-      {isProcessing && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: "50%",
-              background: "#3b82f6",
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 14,
-              flexShrink: 0,
-            }}
-          >
-            🤖
-          </div>
-          <div
-            style={{
-              padding: "10px 14px",
-              background: "#f3f4f6",
-              borderRadius: "18px 18px 18px 4px",
-              fontSize: 14,
-              color: "#6b7280",
-            }}
-          >
-            Агенти працюють над вашим запитом...
-          </div>
-        </div>
-      )}
+      {isProcessing && <ProcessingMessage />}
 
       <div ref={bottomRef} />
     </div>

@@ -4,14 +4,9 @@ Base agent class. All IT-company agents extend BaseITAgent.
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-from crewai import Agent as CrewAIAgent
-
 
 class BaseITAgent(ABC):
-    """
-    Abstract base for all IT-company CrewAI agents.
-    Subclasses define their role, capabilities, and tools.
-    """
+    """Abstract base for all IT-company agents."""
 
     name: str = "BaseAgent"
     role: str = "Generic Agent"
@@ -25,44 +20,33 @@ class BaseITAgent(ABC):
         """Return all tools for this agent (unfiltered). Used for seeding and fallback."""
         ...
 
-    def get_active_tools(self, db: Any) -> list[Any]:
-        """Return only tools enabled in DB. Falls back to get_tools() if agent not seeded yet."""
+    def get_active_tools(self, db: Any, chat_id: Optional[int] = None) -> list[Any]:
+        """Return only tools enabled in DB. Falls back to get_tools() if agent not seeded yet.
+        When chat_id is provided, memory tools are automatically appended."""
         from app.models.agent import Agent
         from app.models.agent_tool_config import AgentToolConfig
 
         agent_row = db.query(Agent).filter(Agent.name == self.name).first()
         if not agent_row:
-            return self.get_tools()
-
-        disabled = {
-            row.tool_name
-            for row in db.query(AgentToolConfig).filter(
-                AgentToolConfig.agent_id == agent_row.id,
-                AgentToolConfig.is_enabled == False,  # noqa: E712
-            ).all()
-        }
-        return [t for t in self.get_tools() if type(t).__name__ not in disabled]
-
-    def get_crewai_agent(self, llm: Any, with_tools: bool = True, db: Optional[Any] = None) -> CrewAIAgent:
-        """
-        Build and return a configured CrewAI Agent.
-        with_tools=False disables tools (useful when LLM doesn't support tool calling).
-        db — if provided, filters tools by DB config.
-        """
-        if with_tools:
-            tools = self.get_active_tools(db) if db is not None else self.get_tools()
+            tools = self.get_tools()
         else:
-            tools = []
-        return CrewAIAgent(
-            role=self.role,
-            goal=self.goal,
-            backstory=self.backstory,
-            tools=tools,
-            llm=llm,
-            verbose=False,
-            allow_delegation=False,
-            max_iter=40,
-        )
+            disabled = {
+                row.tool_name
+                for row in db.query(AgentToolConfig).filter(
+                    AgentToolConfig.agent_id == agent_row.id,
+                    AgentToolConfig.is_enabled == False,  # noqa: E712
+                ).all()
+            }
+            tools = [t for t in self.get_tools() if type(t).__name__ not in disabled]
+
+        if chat_id is not None:
+            from app.tools.memory import get_memory_tools
+            tools = tools + get_memory_tools(chat_id)
+
+        from app.tools.file_writer import FileWriterTool
+        tools = tools + [FileWriterTool()]
+
+        return tools
 
     def describe(self) -> str:
         """Human-readable description for the orchestrator prompt."""

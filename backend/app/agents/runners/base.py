@@ -11,6 +11,7 @@ class AgentRunner(ABC):
         expected_output: str,
         supports_tools: bool,
         db: Optional[Any] = None,
+        chat_id: Optional[int] = None,
     ) -> str:
         """Run agent with given task and return its output as a string."""
         ...

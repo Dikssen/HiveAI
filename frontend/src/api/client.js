@@ -34,6 +34,9 @@ export const api = {
   // Tasks
   getTask: (taskId) => request(`/tasks/${taskId}`),
 
+  // Active task for a chat (pending/running), or null
+  getActiveTask: (chatId) => request(`/chats/${chatId}/active-task`).catch(() => null),
+
   // Agent runs
   getAgentRuns: (chatId) => request(`/chats/${chatId}/agent-runs`),
   getAgentRunLogs: (agentRunId) => request(`/agent-runs/${agentRunId}/logs`),

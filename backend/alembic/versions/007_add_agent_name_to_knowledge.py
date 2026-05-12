@@ -16,9 +16,11 @@ depends_on = None
 def upgrade():
     op.add_column("knowledge_entries", sa.Column("agent_name", sa.String(128), nullable=True))
     op.create_index("ix_knowledge_entries_agent_name", "knowledge_entries", ["agent_name"])
+    # Recreate title index as non-unique (uniqueness is now enforced by uq_knowledge_title_agent)
     op.drop_index("ix_knowledge_entries_title", table_name="knowledge_entries")
     op.create_index("ix_knowledge_entries_title", "knowledge_entries", ["title"])
-    op.drop_constraint("knowledge_entries_title_key", "knowledge_entries", type_="unique")
+    # Drop unique constraint if it exists (may have been created as an index instead of a named constraint)
+    op.execute("ALTER TABLE knowledge_entries DROP CONSTRAINT IF EXISTS knowledge_entries_title_key")
     op.create_unique_constraint("uq_knowledge_title_agent", "knowledge_entries", ["title", "agent_name"])
 
 

@@ -327,8 +327,9 @@ class ConfluenceCreatePageTool(LoggedTool):
             result = client.create_page(**kwargs)
             page_id = result.get("id", "unknown")
             page_url = result.get("_links", {}).get("webui", "")
-            base_url = get_integration_value("CONFLUENCE_URL") or ""
-            return f"Page created. ID: {page_id}. URL: {base_url}{page_url}"
+            base_url = (get_integration_value("CONFLUENCE_URL") or "").rstrip("/")
+            webui = page_url if page_url.startswith("/wiki") else f"/wiki{page_url}"
+            return f"Page created. ID: {page_id}. URL: {base_url}{webui}"
 
 
 class ConfluenceUpdateSectionInput(BaseModel):

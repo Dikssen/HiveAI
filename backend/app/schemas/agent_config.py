@@ -17,6 +17,7 @@ class AgentResponse(BaseModel):
     role: str
     description: str | None
     is_enabled: bool
+    temperature: float
     tool_configs: list[ToolConfigResponse] = []
 
     class Config:
@@ -28,4 +29,5 @@ class ToolConfigUpdate(BaseModel):
 
 
 class AgentUpdate(BaseModel):
-    is_enabled: bool
+    is_enabled: bool | None = None
+    temperature: float | None = None
