@@ -1,73 +1,39 @@
 # HiveAI
 
-An AI-powered operations platform for IT companies. Business users describe tasks in natural language — a multi-agent system handles the execution across your internal tools and systems.
+> **The nervous system of your IT company.** One chat — a team of AI specialists executes across every internal system.
 
-**Current integrations:** Confluence · Jira · GitHub · Fleio (MySQL)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11+-3776ab.svg)](https://python.org)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ed.svg)](docker-compose.yml)
+[![LLM](https://img.shields.io/badge/LLM-any_OpenAI--compatible-10b981.svg)](#switching-llm)
 
----
+![HiveAI demo](docs/demo.gif)
 
-## How it works
-
-```
-User writes a task in chat
-        ↓
-ChiefOrchestrator analyzes and builds an execution plan
-        ↓
-Specialized agents run sequentially via Celery workers
-        ↓
-Each agent uses tools to interact with real systems (Confluence, Jira, GitHub, Fleio, etc.)
-        ↓
-Results are synthesized and returned to the user
-```
-
-**Example flow:**
-> *"Write technical documentation for the SSH key sync module and place it under the Backend section in Confluence"*
-1. Orchestrator assigns the task to `BackendDeveloperAgent`
-2. Agent calls `ConfluenceGetSpaceRoot` → navigates to the correct parent page
-3. Agent calls `ConfluenceCreatePage` with structured content
-4. Final answer includes the Confluence page URL
+**Integrations:** Confluence · Jira · GitHub · Support DB (MySQL) &nbsp;·&nbsp; **100% self-hosted** · any OpenAI-compatible LLM
 
 ---
 
-## Architecture
+## Why HiveAI?
 
-```
-Browser
-  │
-  ▼
-FastAPI (backend :8000)
-  │  REST API + polling
-  ▼
-Celery Task  ──────────────────────────────────────
-  │                                               │
-  ▼                                               ▼
-ChiefOrchestrator                           PostgreSQL
-  │  plan → run → evaluate → synthesize     (results, logs,
-  │                                          agent runs, knowledge)
-  ├── ProjectManagerAgent     ──► Confluence · Jira
-  ├── BackendDeveloperAgent   ──► Confluence · Jira · GitHub
-  ├── QAEngineerAgent         ──► Jira · GitHub
-  ├── BusinessAnalystAgent    ──► Confluence · Jira · Fleio
-  ├── SupportEngineerAgent    ──► Jira · Fleio
-  ├── DataAnalystAgent        ──► Fleio
-  └── DevOpsAgent             ──► GitHub · logs
+| Without HiveAI | With HiveAI |
+|----------------|-------------|
+| Switching between Jira, Confluence, GitHub manually | One chat — orchestrator decides what to do and where |
+| SLA reports take hours to compile, or never get written | Analytics on demand — agent connects to every data source and returns a ready report |
+| Documentation written manually, goes stale immediately | Documentation generated and published automatically |
+| New hire spends weeks learning the infrastructure | Company knowledge base instantly available to every agent |
+| Routine work consumes specialists' time | Routine → agents. People → creative and complex work |
 
-All agents ──► Knowledge Base (private + global entries)
+---
 
-Redis ← Celery broker
-Fleio MySQL ← read-only (host machine)
-```
+## Key capabilities
 
-| Service | Technology | Port |
-|---------|-----------|------|
-| frontend | React + Vite → nginx | 3000 |
-| backend | FastAPI + Python | 8000 |
-| worker | Celery (prefork) | — |
-| redis | Redis 7 | 6379 |
-| postgres | PostgreSQL 16 | 5432 |
-| flower | Celery monitor | 5555 |
+**Speed** — 30–60 minutes of routine becomes 2–3 minutes, every day for every team member.
 
-**LLM:** Runs via Ollama on the host machine (outside Docker). Any OpenAI-compatible provider also works.
+**Extensibility** — New agents, integrations, and workflows connect without stopping the platform. Add a new agent in ~10 lines of Python.
+
+**Control** — Enable or disable any agent or individual tool at runtime, no restart needed. Complete log of every action.
+
+**Privacy** — Runs entirely on your servers with a local LLM (Ollama). Or swap in any OpenAI-compatible API — your choice.
 
 ---
 
@@ -93,12 +59,9 @@ cp .env.example .env
 Defaults work for local Ollama out of the box:
 ```env
 LLM_PROVIDER=ollama
-LLM_MODEL=qwen2.5:14b
+LLM_MODEL=qwen3:14b
 LLM_BASE_URL=http://host.docker.internal:11434
 LLM_SUPPORTS_TOOLS=true
-
-ORCHESTRATOR_RUNNER=custom
-MAX_ORCHESTRATOR_ITERATIONS=5
 ```
 
 ### 3. Start
@@ -119,62 +82,120 @@ First run takes 5–10 minutes (image downloads + frontend build).
 
 ---
 
-## Configuring integrations
+## How it works
 
-All credentials are stored in the database — no restart needed after changes.
-
-**Configure via API:**
-```bash
-curl -X PATCH http://localhost:8000/api/integrations/CONFLUENCE_URL \
-  -H "Content-Type: application/json" \
-  -d '{"value": "https://mycompany.atlassian.net/wiki"}'
+```
+User writes a task in natural language
+        ↓
+ChiefOrchestrator — builds a plan, delegates, evaluates, synthesizes
+        ↓
+Specialized agents execute via Celery workers
+        ↓
+Each agent uses tools to interact with real systems
+        ↓
+Result returned to the user
 ```
 
-Or use the Swagger UI at `http://localhost:8000/docs` → `PATCH /api/integrations/{key}`.
+**Example:**
+> *"Analyze why support tickets about access issues tripled this month, and post a summary to Confluence"*
 
-### Confluence
-
-| Key | Description |
-|-----|-------------|
-| `CONFLUENCE_URL` | Base URL, e.g. `https://mycompany.atlassian.net/wiki` |
-| `CONFLUENCE_USER` | Login email |
-| `CONFLUENCE_API_TOKEN` | API token (masked in API responses) |
-| `CONFLUENCE_SPACE_KEY` | Default space key, e.g. `DEV` |
-| `CONFLUENCE_WRITE_ENABLED` | `true` to allow creating/editing pages |
-
-### Jira
-
-| Key | Description |
-|-----|-------------|
-| `JIRA_URL` | Base URL, e.g. `https://mycompany.atlassian.net` (no `/wiki`) |
-| `JIRA_USER` | Login email (same as Confluence) |
-| `JIRA_API_TOKEN` | API token (same as Confluence) |
-| `JIRA_PROJECT_KEY` | Default project key, e.g. `DEV` |
-| `JIRA_WRITE_ENABLED` | `true` to allow creating/updating issues |
-
-### GitHub
-
-| Key | Description |
-|-----|-------------|
-| `GITHUB_TOKEN` | Personal access token (masked in API responses) |
-
-### Fleio (MySQL)
-
-Direct read-only connection to your Fleio support database.
-
-| Key | Description |
-|-----|-------------|
-| `FLEIO_DB_HOST` | MySQL host. In Docker: `host.docker.internal` |
-| `FLEIO_DB_PORT` | MySQL port, default `3306` |
-| `FLEIO_DB_USER` | MySQL user with read access |
-| `FLEIO_DB_PASSWORD` | MySQL password (masked in API responses) |
-| `FLEIO_DB_NAME` | Database name, e.g. `fleio` |
-
-> MySQL must bind to `0.0.0.0` (not `127.0.0.1`) for Docker to reach it via `host.docker.internal`.
+1. `DataAnalystAgent` → queries ticket database, identifies the spike pattern
+2. `DevOpsAgent` → checks server logs for related errors in the same period
+3. `BackendDeveloperAgent` → reviews recent GitHub changes in the auth module
+4. `ProjectManagerAgent` → creates a Confluence page with consolidated findings
+5. Final answer includes the page link
 
 ---
 
-## Agent & tool management
+## Agents
+
+| Agent | Role | Integrations |
+|-------|------|--------------|
+| ChiefOrchestrator | Plans, delegates, evaluates, synthesizes | — |
+| ProjectManager | Tasks, sprints, documentation | Confluence · Jira |
+| BackendDeveloper | Code, reviews, docs | GitHub · Confluence · Jira |
+| QAEngineer | Tests, bug reports, quality checks | Jira · GitHub |
+| BusinessAnalyst | Process analysis, requirements | Confluence · Jira · Fleio |
+| SupportEngineer | Client support tickets | Jira · Fleio |
+| DataAnalyst | SLA metrics, trends, statistics | Fleio · MySQL |
+| DevOps | Logs, infrastructure | GitHub · Logs |
+
+New agents plug in without touching the orchestrator. See [Adding a new agent](#adding-a-new-agent).
+
+---
+
+## Knowledge base
+
+Agents share a persistent knowledge base. Each agent has **private entries** (visible only to itself) and access to **global entries** (shared across the team).
+
+The orchestrator reads a summary of available knowledge topics when planning — so agents don't re-discover what's already known.
+
+```bash
+# Add company-wide knowledge
+curl -X POST http://localhost:8000/api/knowledge \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Infrastructure overview", "content": "...", "tags": "infra,servers"}'
+
+# List all entries
+curl http://localhost:8000/api/knowledge | jq .
+```
+
+Agents also write to the knowledge base themselves using `KnowledgeSave` and `KnowledgeAppend` tools — with a mandatory `reason` field to prevent noise.
+
+---
+
+## Usage examples
+
+```
+Write technical documentation for the auth module and publish it to Confluence
+
+Create a Jira task for implementing dark mode with High priority
+
+Analyze support ticket trends from last month and find the top recurring issues
+
+Investigate the 503 errors in service logs and summarize the root cause
+
+List all open In Progress tickets in the DEV project
+
+Which clients submitted the most support tickets this week?
+
+Show SLA performance for the last 30 days
+
+What changed in the codebase since last Friday?
+```
+
+---
+
+## Vision
+
+HiveAI is built to become the **nervous system of an IT company** — not a single tool, but a living platform embedded in every process.
+
+### Where the platform is heading
+
+| Scenario | Description |
+|----------|-------------|
+| Support on autopilot | New client request → agent analyzes similar cases, proposes a response. Staff reviews and approves. |
+| Self-writing documentation | After every code change an agent automatically updates internal documentation. |
+| Always-fresh analytics | Weekly automated SLA and ticket reports — zero manual steps. |
+| Rapid incident diagnosis | Failure signal → agent analyzes logs, tasks, and recent changes, produces a root cause report in minutes. |
+| Standup in seconds | Agent collects progress from all systems and summarizes it before the meeting. |
+| Your scenario | New agents, integrations, and workflows connect without stopping the platform. |
+
+### Next integrations
+
+| Integration | Status |
+|------------|--------|
+| OpenStack (VM, projects, networks) | Planned |
+| Slack / Telegram notifications | Planned |
+| Grafana metrics & alerts | Planned |
+| PagerDuty / Zabbix incidents | Planned |
+| CRM | Future |
+
+---
+
+## Developer docs
+
+### Agent & tool management
 
 Enable or disable individual agents and their tools via API — no restart needed.
 
@@ -191,58 +212,7 @@ curl -X PATCH http://localhost:8000/api/agents/ProjectManagerAgent/tools/JiraCre
 curl http://localhost:8000/api/agents | jq .
 ```
 
----
-
-## Knowledge base
-
-Agents have a persistent knowledge base for storing infrastructure facts, DB schemas, server configs, and known issue patterns. Each agent has private entries (visible only to itself) and access to global entries (shared across all agents).
-
-The orchestrator sees a summary of available knowledge topics when planning tasks.
-
-```bash
-# Create a global knowledge entry
-curl -X POST http://localhost:8000/api/knowledge \
-  -H "Content-Type: application/json" \
-  -d '{"title": "Fleio Database Schema", "content": "...", "tags": "fleio,mysql"}'
-
-# List all entries
-curl http://localhost:8000/api/knowledge | jq .
-
-# List entries for a specific agent
-curl "http://localhost:8000/api/knowledge?agent_name=DataAnalystAgent" | jq .
-
-# Update an entry
-curl -X PATCH http://localhost:8000/api/knowledge/1 \
-  -H "Content-Type: application/json" -d '{"content": "updated content"}'
-```
-
-Agents can also write to the knowledge base themselves using `KnowledgeSave` and `KnowledgeAppend` tools — with a mandatory `reason` field to prevent noise.
-
----
-
-## Usage examples
-
-```
-Write technical documentation for the auth module and publish it to Confluence
-
-Create a Jira task for implementing dark mode with High priority
-
-Analyze support ticket trends from last month and find the top recurring issues
-
-Review the deployment configuration and suggest improvements
-
-Investigate the 503 errors in service logs and summarize the root cause
-
-List all open In Progress tickets in the DEV project
-
-Which clients submitted the most support tickets this week?
-
-Show SLA performance for the last 30 days
-```
-
----
-
-## Switching LLM
+### Switching LLM
 
 Edit `.env` and restart `backend` + `worker`:
 
@@ -269,9 +239,7 @@ LLM_API_KEY=lm-studio
 docker compose restart backend worker
 ```
 
----
-
-## Adding a new agent
+### Adding a new agent
 
 1. Create `backend/app/agents/my_agent.py`:
 
@@ -302,11 +270,9 @@ AGENT_REGISTRY = {
 }
 ```
 
-Restart `backend` + `worker` — the orchestrator discovers agents from the registry automatically. The agent and its tools are seeded into the database on next startup.
+Restart `backend` + `worker` — the orchestrator discovers agents from the registry automatically.
 
----
-
-## Adding a new tool
+### Adding a new tool
 
 ```python
 from pydantic import BaseModel, Field
@@ -326,9 +292,44 @@ class MyTool(LoggedTool):
 
 Add it to the relevant agent's `get_tools()` method. See [backend/app/tools/TOOLS.md](backend/app/tools/TOOLS.md) for full tools reference.
 
----
+### Architecture
 
-## Project structure
+```
+Browser
+  │
+  ▼
+FastAPI (backend :8000)
+  │  REST API + polling
+  ▼
+Celery Task  ──────────────────────────────────────
+  │                                               │
+  ▼                                               ▼
+ChiefOrchestrator                           PostgreSQL
+  │  plan → run → evaluate → synthesize     (results, logs,
+  │                                          agent runs, knowledge)
+  ├── ProjectManagerAgent     ──► Confluence · Jira
+  ├── BackendDeveloperAgent   ──► Confluence · Jira · GitHub
+  ├── QAEngineerAgent         ──► Jira · GitHub
+  ├── BusinessAnalystAgent    ──► Confluence · Jira · Fleio
+  ├── SupportEngineerAgent    ──► Jira · Fleio
+  ├── DataAnalystAgent        ──► Fleio
+  └── DevOpsAgent             ──► GitHub · logs
+
+All agents ──► Knowledge Base (private + global entries)
+
+Redis ← Celery broker
+```
+
+| Service | Technology | Port |
+|---------|-----------|------|
+| frontend | React + Vite → nginx | 3000 |
+| backend | FastAPI + Python | 8000 |
+| worker | Celery (prefork) | — |
+| redis | Redis 7 | 6379 |
+| postgres | PostgreSQL 16 | 5432 |
+| flower | Celery monitor | 5555 |
+
+### Project structure
 
 ```
 it-company/
@@ -347,8 +348,7 @@ it-company/
 │   │   │   ├── qa_engineer.py
 │   │   │   ├── support_engineer.py
 │   │   │   └── runners/
-│   │   │       ├── langgraph_runner.py  # ReAct agent runner (default)
-│   │   │       └── crewai_runner.py     # CrewAI runner (alternative)
+│   │   │       └── langgraph_runner.py  # ReAct agent loop
 │   │   ├── orchestrator/
 │   │   │   └── orchestrator.py       # Planning, evaluation, synthesis
 │   │   ├── tools/
@@ -361,17 +361,17 @@ it-company/
 │   │   │   ├── knowledge.py          # Agent knowledge base tools
 │   │   │   └── TOOLS.md              # Full tools reference
 │   │   ├── models/                   # SQLAlchemy models
-│   │   │   ├── agent.py              # Agent enable/disable
-│   │   │   ├── agent_tool_config.py  # Per-agent tool enable/disable
-│   │   │   ├── integration_config.py # External service credentials
-│   │   │   └── knowledge_entry.py    # Knowledge base entries
+│   │   │   ├── agent.py
+│   │   │   ├── agent_tool_config.py
+│   │   │   ├── integration_config.py
+│   │   │   └── knowledge_entry.py
 │   │   ├── api/
 │   │   │   ├── agent_config.py       # GET/PATCH /api/agents
 │   │   │   ├── integrations.py       # GET/PATCH /api/integrations
 │   │   │   └── knowledge.py          # CRUD /api/knowledge
 │   │   ├── db/
-│   │   │   ├── seed.py               # Upsert agents, tools, integration configs on startup
-│   │   │   └── integration_config_helper.py  # DB reads with 60s TTL cache
+│   │   │   ├── seed.py               # Upsert agents, tools, configs on startup
+│   │   │   └── integration_config_helper.py
 │   │   └── core/
 │   │       ├── llm.py                # LLM factory (Ollama / OpenAI-compatible)
 │   │       └── celery_app.py
@@ -380,14 +380,16 @@ it-company/
     └── src/
         ├── App.jsx
         └── components/
+            ├── ChatList.jsx
+            ├── ChatWindow.jsx
             ├── MessageList.jsx
-            ├── ChatInput.jsx
-            └── Sidebar.jsx
+            ├── MessageInput.jsx
+            ├── AgentRunTimeline.jsx
+            ├── RunDetailPage.jsx
+            └── StatusBadge.jsx
 ```
 
----
-
-## Database schema
+### Database schema
 
 ```
 chats
@@ -408,9 +410,7 @@ knowledge_entries
   └── agent_name SET   → private (visible only to that agent)
 ```
 
----
-
-## Useful commands
+### Useful commands
 
 ```bash
 # View worker logs
@@ -428,10 +428,7 @@ curl http://localhost:8000/api/agents | jq .
 # List all integration configs
 curl http://localhost:8000/api/integrations | jq .
 
-# List all knowledge entries
-curl http://localhost:8000/api/knowledge | jq .
-
-# View agent runs via API
+# View agent runs
 curl http://localhost:8000/api/chats/1/agent-runs | jq .
 
 # Rebuild a single service
@@ -440,17 +437,6 @@ docker compose up -d --build worker
 
 ---
 
-## Roadmap
+## License
 
-- [x] Multi-agent orchestration
-- [x] Confluence integration (read, write, navigate, move pages)
-- [x] Jira integration (search, read, create, comment, transition issues)
-- [x] GitHub integration (list repos, clone, read, edit files)
-- [x] Fleio integration (ticket analytics, SLA reports, trends via MySQL)
-- [x] DB-driven agent & tool enable/disable (no restart needed)
-- [x] DB-driven integration credentials (no restart needed)
-- [x] Full agent run history with context
-- [x] Agent knowledge base (persistent memory, private + global entries)
-- [ ] OpenStack integration
-- [ ] Streaming responses
-- [ ] Agent run UI timeline
+[AGPL-3.0](LICENSE) — Bohdan Chernii, 2026.
