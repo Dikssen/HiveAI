@@ -31,36 +31,11 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
 
-  // Send message with SSE streaming — async generator that yields parsed events
-  sendMessageStream: async function* (chatId, content) {
-    const res = await fetch(`${BASE}/chats/${chatId}/messages/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || `HTTP ${res.status}`);
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try { yield JSON.parse(line.slice(6)); } catch {}
-        }
-      }
-    }
-  },
-
   // Tasks
   getTask: (taskId) => request(`/tasks/${taskId}`),
+
+  // Active task for a chat (pending/running), or null
+  getActiveTask: (chatId) => request(`/chats/${chatId}/active-task`).catch(() => null),
 
   // Agent runs
   getAgentRuns: (chatId) => request(`/chats/${chatId}/agent-runs`),

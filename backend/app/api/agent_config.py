@@ -27,7 +27,10 @@ def update_agent(agent_name: str, body: AgentUpdate, db: Session = Depends(get_d
     agent = db.query(Agent).filter(Agent.name == agent_name).first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    agent.is_enabled = body.is_enabled
+    if body.is_enabled is not None:
+        agent.is_enabled = body.is_enabled
+    if body.temperature is not None:
+        agent.temperature = max(0.0, min(2.0, body.temperature))
     db.commit()
     db.refresh(agent)
     return agent

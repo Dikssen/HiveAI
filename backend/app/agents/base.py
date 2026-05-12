@@ -20,23 +20,33 @@ class BaseITAgent(ABC):
         """Return all tools for this agent (unfiltered). Used for seeding and fallback."""
         ...
 
-    def get_active_tools(self, db: Any) -> list[Any]:
-        """Return only tools enabled in DB. Falls back to get_tools() if agent not seeded yet."""
+    def get_active_tools(self, db: Any, chat_id: Optional[int] = None) -> list[Any]:
+        """Return only tools enabled in DB. Falls back to get_tools() if agent not seeded yet.
+        When chat_id is provided, memory tools are automatically appended."""
         from app.models.agent import Agent
         from app.models.agent_tool_config import AgentToolConfig
 
         agent_row = db.query(Agent).filter(Agent.name == self.name).first()
         if not agent_row:
-            return self.get_tools()
+            tools = self.get_tools()
+        else:
+            disabled = {
+                row.tool_name
+                for row in db.query(AgentToolConfig).filter(
+                    AgentToolConfig.agent_id == agent_row.id,
+                    AgentToolConfig.is_enabled == False,  # noqa: E712
+                ).all()
+            }
+            tools = [t for t in self.get_tools() if type(t).__name__ not in disabled]
 
-        disabled = {
-            row.tool_name
-            for row in db.query(AgentToolConfig).filter(
-                AgentToolConfig.agent_id == agent_row.id,
-                AgentToolConfig.is_enabled == False,  # noqa: E712
-            ).all()
-        }
-        return [t for t in self.get_tools() if type(t).__name__ not in disabled]
+        if chat_id is not None:
+            from app.tools.memory import get_memory_tools
+            tools = tools + get_memory_tools(chat_id)
+
+        from app.tools.file_writer import FileWriterTool
+        tools = tools + [FileWriterTool()]
+
+        return tools
 
     def describe(self) -> str:
         """Human-readable description for the orchestrator prompt."""

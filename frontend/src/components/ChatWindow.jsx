@@ -7,15 +7,11 @@ import StatusBadge from "./StatusBadge";
 
 export default function ChatWindow({ chatId, onViewRun }) {
   const [messages, setMessages] = useState([]);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingStep, setStreamingStep] = useState(null);
-  const [streamingContent, setStreamingContent] = useState("");
-  const [resumeTaskId, setResumeTaskId] = useState(null); // polling fallback when stream was interrupted
+  const [resumeTaskId, setResumeTaskId] = useState(null);
   const [timelineKey, setTimelineKey] = useState(0);
   const [showTimeline, setShowTimeline] = useState(true);
   const [agentRuns, setAgentRuns] = useState([]);
   const [error, setError] = useState(null);
-  const abortRef = useRef(null);
   const pollRef = useRef(null);
 
   const loadMessages = useCallback(async () => {
@@ -51,14 +47,10 @@ export default function ChatWindow({ chatId, onViewRun }) {
     return () => clearInterval(pollRef.current);
   }, [resumeTaskId, loadMessages, chatId]);
 
-  // On chat switch: abort active stream, check for in-progress tasks to resume via polling
+  // On chat switch: check for in-progress tasks to resume via polling
   useEffect(() => {
-    abortRef.current?.abort();
     clearInterval(pollRef.current);
     setMessages([]);
-    setIsStreaming(false);
-    setStreamingStep(null);
-    setStreamingContent("");
     setResumeTaskId(null);
     setError(null);
     setAgentRuns([]);
@@ -66,32 +58,20 @@ export default function ChatWindow({ chatId, onViewRun }) {
     if (!chatId) return;
 
     loadMessages();
-    api.getAgentRuns(chatId)
-      .then((runs) => {
-        setAgentRuns(runs);
-        // If there's a running ChiefOrchestratorAgent with a task_id,
-        // the stream was interrupted — resume via polling
-        const active = runs.find(
-          (r) => r.agent_name === "ChiefOrchestratorAgent" && r.status === "running" && r.task_id
-        );
-        if (active) setResumeTaskId(active.task_id);
-      })
-      .catch(() => {});
+    // Check for an active task first — more reliable than scanning agent runs
+    api.getActiveTask(chatId).then((active) => {
+      if (active?.task_id) setResumeTaskId(active.task_id);
+    });
+    api.getAgentRuns(chatId).then(setAgentRuns).catch(() => {});
 
-    return () => {
-      abortRef.current?.abort();
-      clearInterval(pollRef.current);
-    };
+    return () => clearInterval(pollRef.current);
   }, [chatId]);
 
   const handleSend = async (content) => {
-    abortRef.current?.abort();
     clearInterval(pollRef.current);
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-
     setError(null);
     setResumeTaskId(null);
+
     const tempMsg = {
       id: Date.now(),
       chat_id: chatId,
@@ -100,43 +80,17 @@ export default function ChatWindow({ chatId, onViewRun }) {
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, tempMsg]);
-    setIsStreaming(true);
-    setStreamingStep(null);
-    setStreamingContent("");
 
     try {
-      for await (const event of api.sendMessageStream(chatId, content)) {
-        if (ctrl.signal.aborted) break;
-
-        if (event.type === "step") {
-          setStreamingStep(event);
-        } else if (event.type === "token") {
-          setStreamingContent((prev) => prev + event.content);
-        } else if (event.type === "done") {
-          await loadMessages();
-          setStreamingContent("");
-          setStreamingStep(null);
-          setIsStreaming(false);
-          setTimelineKey((k) => k + 1);
-          api.getAgentRuns(chatId).then(setAgentRuns).catch(() => {});
-        } else if (event.type === "error") {
-          await loadMessages();
-          setStreamingContent("");
-          setStreamingStep(null);
-          setIsStreaming(false);
-        }
-      }
+      const { task_id } = await api.sendMessage(chatId, content);
+      setResumeTaskId(task_id);
     } catch (e) {
-      if (e.name === "AbortError") return;
       setError(e.message);
       setMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
-      setStreamingContent("");
-      setStreamingStep(null);
-      setIsStreaming(false);
     }
   };
 
-  const isProcessing = isStreaming || !!resumeTaskId;
+  const isProcessing = !!resumeTaskId;
 
   if (!chatId) {
     return (
@@ -240,8 +194,6 @@ export default function ChatWindow({ chatId, onViewRun }) {
       <MessageList
         messages={messages}
         isProcessing={isProcessing}
-        streamingStep={streamingStep}
-        streamingContent={streamingContent}
       />
 
       {showTimeline && (

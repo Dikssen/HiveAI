@@ -152,91 +152,32 @@ function Message({ msg }) {
   );
 }
 
-const STEP_LABELS = {
-  planning:    "Orchestrator планує...",
-  evaluating:  "Оцінюю результат...",
-  synthesizing: "Формую відповідь...",
-};
-
-function stepLabel(step) {
-  if (!step) return "";
-  if (step.event === "decision") {
-    const agents = (step.agents || []).join(", ");
-    return agents ? `Агенти: ${agents}` : "Рішення прийнято";
-  }
-  if (step.event === "agent_start")    return `Запускаю ${step.agent}...`;
-  if (step.event === "agent_complete") return `${step.agent} ✓`;
-  return STEP_LABELS[step.event] || step.event;
-}
-
-function StreamingMessage({ step, content }) {
-  const hasContent = content && content.length > 0;
-
+function ProcessingMessage() {
   return (
     <>
       <style>{`
-        @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
-        .streaming-cursor { display: inline-block; width: 7px; height: 14px; background: #374151; border-radius: 1px; margin-left: 2px; vertical-align: text-bottom; animation: blink 1s step-end infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
         .step-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #d1d5db; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 7px; vertical-align: middle; }
       `}</style>
       <div style={{ display: "flex", marginBottom: 12, alignItems: "flex-start" }}>
-        <div
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: "50%",
-            background: "#3b82f6",
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 14,
-            marginRight: 8,
-            flexShrink: 0,
-            marginTop: 2,
-          }}
-        >
+        <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#3b82f6", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, marginRight: 8, flexShrink: 0, marginTop: 2 }}>
           🤖
         </div>
-
-        <div
-          style={{
-            maxWidth: "72%",
-            padding: "10px 14px",
-            borderRadius: "18px 18px 18px 4px",
-            background: "#f3f4f6",
-            color: "#111827",
-            fontSize: 14,
-            lineHeight: 1.55,
-            wordBreak: "break-word",
-            overflowWrap: "break-word",
-            minWidth: 0,
-          }}
-        >
-          {hasContent ? (
-            <>
-              <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{content}</Markdown>
-              <span className="streaming-cursor" />
-            </>
-          ) : (
-            <div style={{ color: "#6b7280", display: "flex", alignItems: "center" }}>
-              <span className="step-spinner" />
-              {stepLabel(step) || "Агенти працюють..."}
-            </div>
-          )}
+        <div style={{ padding: "10px 14px", borderRadius: "18px 18px 18px 4px", background: "#f3f4f6", color: "#6b7280", fontSize: 14 }}>
+          <span className="step-spinner" />
+          Агенти працюють...
         </div>
       </div>
     </>
   );
 }
 
-export default function MessageList({ messages, isProcessing, streamingStep, streamingContent }) {
+export default function MessageList({ messages, isProcessing }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingContent]);
+  }, [messages]);
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
@@ -261,9 +202,7 @@ export default function MessageList({ messages, isProcessing, streamingStep, str
         <Message key={msg.id} msg={msg} />
       ))}
 
-      {isProcessing && (
-        <StreamingMessage step={streamingStep} content={streamingContent || ""} />
-      )}
+      {isProcessing && <ProcessingMessage />}
 
       <div ref={bottomRef} />
     </div>

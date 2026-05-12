@@ -5,15 +5,55 @@ Supports Ollama, Anthropic, and OpenAI-compatible endpoints.
 """
 import httpx
 import structlog
+from typing import Any
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.outputs import LLMResult
 
 from app.config import settings
 
 logger = structlog.get_logger()
 
 
+class _LLMLogger(BaseCallbackHandler):
+    """Logs every request/response that goes to the LLM."""
+
+    def on_chat_model_start(self, serialized: dict, messages: list, **kwargs: Any) -> None:
+        for msg_list in messages:
+            parts = []
+            for msg in msg_list:
+                role = getattr(msg, "type", "?")
+                content = str(msg.content)
+                parts.append({"role": role, "chars": len(content), "content": content})
+            logger.info(
+                "llm_request",
+                model=serialized.get("kwargs", {}).get("model_name", settings.LLM_MODEL),
+                messages=parts,
+            )
+
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        for gen_list in response.generations:
+            for gen in gen_list:
+                text = getattr(gen, "text", None) or str(getattr(gen, "message", gen))
+                llm_output = getattr(response, "llm_output", {}) or {}
+                usage = llm_output.get("token_usage") or llm_output.get("usage")
+                logger.info(
+                    "llm_response",
+                    chars=len(text),
+                    content=text,
+                    token_usage=usage,
+                )
+
+    def on_llm_error(self, error: Exception, **kwargs: Any) -> None:
+        logger.error("llm_error", error=str(error))
+
+
+_llm_logger = _LLMLogger()
+
+
 def get_langchain_llm(
     json_mode: bool = False,
     extra_body: dict | None = None,
+    temperature: float = 0.7,
 ):
     """
     Return a LangChain chat model for direct LLM calls (orchestrator decision).
@@ -26,6 +66,8 @@ def get_langchain_llm(
         kwargs: dict = {
             "model": settings.LLM_MODEL,
             "base_url": settings.LLM_BASE_URL,
+            "temperature": temperature,
+            "callbacks": [_llm_logger],
         }
         if json_mode:
             kwargs["format"] = "json"
@@ -38,6 +80,8 @@ def get_langchain_llm(
         return ChatAnthropic(
             model=settings.LLM_MODEL,
             api_key=settings.LLM_API_KEY,
+            temperature=temperature,
+            callbacks=[_llm_logger],
         )
 
     else:
@@ -55,7 +99,9 @@ def get_langchain_llm(
             "model": settings.LLM_MODEL,
             "base_url": settings.LLM_BASE_URL,
             "api_key": settings.LLM_API_KEY or "sk-dummy",
+            "temperature": temperature,
             "extra_body": merged_extra_body or None,
+            "callbacks": [_llm_logger],
         }
 
         if json_mode:

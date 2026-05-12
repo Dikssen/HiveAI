@@ -29,6 +29,8 @@ class ProjectManagerAgent(BaseITAgent):
         "risk and dependency identification",
         "acceptance criteria definition",
         "stakeholder summary writing",
+        "create, update, and search Confluence pages and spaces",
+        "create and update Jira tasks, epics, and sprints",
     ]
 
     def get_tools(self):

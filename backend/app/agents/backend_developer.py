@@ -44,6 +44,7 @@ class BackendDeveloperAgent(BaseITAgent):
         "list files in a local repository",
         "read file contents from a local repository",
         "edit specific functions, classes, or line ranges in code files",
+        "create, update, and search Confluence pages and spaces",
     ]
 
     def get_tools(self):

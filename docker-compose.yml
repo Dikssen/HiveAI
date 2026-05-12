@@ -44,6 +44,7 @@ services:
       - LLM_ENABLE_THINKING=${LLM_ENABLE_THINKING:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SAMPLE_DATA_PATH=/app/sample_data
+      - FILES_DIR=/app/files
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,6 +54,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./sample_data:/app/sample_data:ro
+      - hiveai_files:/app/files
     command: >
       sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
@@ -85,6 +87,7 @@ services:
     volumes:
       - ./sample_data:/app/sample_data:ro
       - ./repos:/app/repos
+      - hiveai_files:/app/files
 
   flower:
     image: mher/flower:2.0
@@ -107,3 +110,4 @@ services:
 
 volumes:
   postgres_data:
+  hiveai_files:

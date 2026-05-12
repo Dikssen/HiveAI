@@ -1,4 +1,5 @@
 """Structured logging setup using structlog."""
+import json
 import logging
 import sys
 
@@ -15,7 +16,9 @@ def configure_logging() -> None:
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.dev.ConsoleRenderer() if sys.stdout.isatty() else structlog.processors.JSONRenderer(),
+            structlog.dev.ConsoleRenderer() if sys.stdout.isatty() else structlog.processors.JSONRenderer(
+                serializer=lambda obj, **kw: json.dumps(obj, ensure_ascii=False, **kw)
+            ),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
         context_class=dict,
